@@ -5,7 +5,7 @@ services:
     build: .
     container_name: registry-center
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"
     volumes:
       - ./data:/opt/registry-center/data
       - ./etc/ssl:/opt/registry-center/etc/ssl
@@ -14,6 +14,10 @@ services:
     environment:
       - REGISTRY_IP=0.0.0.0
       - REGISTRY_PORT=5000
+      # Secure-by-default: requires real TLS certs under etc/ssl (see
+      # docs/en/Registry Center Security Guide.md). For local dev without
+      # certs, docker-compose.override.yml (auto-loaded by `docker compose up`)
+      # flips this to false — see that file for details.
       - REGISTRY_ENABLE_HTTPS=true
       - REGISTRY_VERIFY_CLIENT=false
       - REGISTRY_OWNER_ISOLATION_ENABLED=false
@@ -21,7 +25,7 @@ services:
       - REGISTRY_SIGNATURE_VALIDATION_ENABLED=false
       - REGISTRY_FORWARDED_ALLOW_IPS=*
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/rest/v1/registry-center/agent-cards"]
+      test: ["CMD", "curl", "-kf", "https://localhost:5000/rest/v1/registry-center/agent-cards"]
       interval: 30s
       timeout: 10s
       retries: 3
