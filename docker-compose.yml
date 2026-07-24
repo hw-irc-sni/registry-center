@@ -14,6 +14,12 @@ services:
     environment:
       - REGISTRY_IP=0.0.0.0
       - REGISTRY_PORT=5000
+      # Local-dev-only default: no TLS certs are provisioned for this compose file.
+      # The port is bound to 127.0.0.1 below to limit exposure of the resulting
+      # plaintext service. For real TLS, generate dev certs with
+      # `python generate_selfsign_cert.py etc/ssl serverAuth` (see docs/en/Registry
+      # Center Security Guide.md#self-signed-certificate-generation-tool), then set
+      # this to true and run `python -m agent_registry.init` to wire up the paths.
       - REGISTRY_ENABLE_HTTPS=false
       - REGISTRY_VERIFY_CLIENT=false
       - REGISTRY_OWNER_ISOLATION_ENABLED=false

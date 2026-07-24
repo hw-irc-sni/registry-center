@@ -1,8 +1,8 @@
 # Registry Center vs CAT26 Registration Center — Comparative Analysis
 
 **Repositories compared:**
-- **OPENAN-VERSION** — `/home/lorenzo/git/openan/registry-center` (this repo, `hw-irc-sni/registry-center`, branch `lorenzo-analysis`)
-- **CATALYST-VERSION** — `/home/lorenzo/git/openan-catalyst/cat26-registration-center` (`fcamacho-Huawei/cat26-registration-center`)
+- **OPENAN-VERSION** — this repo (`hw-irc-sni/registry-center`, branch `lorenzo-analysis`)
+- **CATALYST-VERSION** — `fcamacho-Huawei/cat26-registration-center`
 
 ## Scope, methodology, and assumptions
 
@@ -121,7 +121,7 @@ The public API also improved:
 
 Two side-effects of the refactor:
 1. OPENAN-VERSION deletes an entire dead, parallel embedding abstraction that CATALYST-VERSION carried (`common/vector_db/embedding_model/` — `BgeM3EmbeddingTool`, `EmbeddingConfig` — imported/re-exported but never instantiated by `core.py`, which actually used `AOCEmbeddingLLM` all along);
-2. OPENAN-VERSION's `llm_config.json` replaces CATALYST-VERSION's checked-in, **live-looking credentials** (a DeepSeek `sk-...` API key and an AOC bearer token/app-secret) with placeholders — a real secrets-hygiene fix worth calling out explicitly, independent of the architectural merits.
+2. OPENAN-VERSION's `llm_config.json` replaces CATALYST-VERSION's checked-in, non-placeholder-looking credential values with placeholders — a real secrets-hygiene fix worth calling out explicitly, independent of the architectural merits. (Flagged separately and privately to the owning team rather than detailed here.)
 
 One capability trade-off, not a regression:
 - CATALYST-VERSION's AOC embed/rerank classes raised `NotImplementedError` with a clear message if misconfigured;
