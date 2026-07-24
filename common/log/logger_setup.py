@@ -23,11 +23,13 @@ from pathlib import Path
 from loguru import logger
 
 from common.util.app_config import get_root_path
+IS_WINDOWS = os.name == 'nt'
 
 root_path = get_root_path()
 _LOG_DIR = Path(root_path) / "log"
 _LOG_DIR.mkdir(exist_ok=True)
-os.chmod(_LOG_DIR, 0o700)
+if not IS_WINDOWS:
+    os.chmod(_LOG_DIR, 0o700)
 
 LOG_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
@@ -61,7 +63,8 @@ def add_module_logger(module_prefix: str):
                 zf.write(source_file, arcname=Path(source_file).name)
 
             # Set permissions after compression
-            os.chmod(zip_file, 0o440)
+            if not IS_WINDOWS:
+                os.chmod(zip_file, 0o440)
 
             # Optionally remove original log file
             os.remove(source_file)

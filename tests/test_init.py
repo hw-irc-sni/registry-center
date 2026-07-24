@@ -386,10 +386,150 @@ class TestInitCommand(unittest.TestCase):
 
         with patch('builtins.input', side_effect=['', '']):
             with patch.object(init_cmd, 'validate_cert_path', return_value=(True, "")):
-                with patch.object(init_cmd, 'validate_file_permissions', return_value=(True, "")):
+               with patch.object(init_cmd, 'validate_file_permissions', return_value=(True, "")):
                     config = init_cmd.config_sign_cert()
 
                     self.assertEqual(config['sign_keyfile_password'], '/existing_sign_pwd')
+
+
+# ==================== Config Save/Parse Consistency Tests ====================
+
+class TestInitConfigFixes(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.config_file = os.path.join(self.temp_dir, "server.conf")
+
+    def tearDown(self):
+        if os.path.exists(self.config_file):
+            os.remove(self.config_file)
+        os.rmdir(self.temp_dir)
+
+    def _create_init_command(self):
+        init_cmd = InitCommand()
+        init_cmd.config_file = self.config_file
+        init_cmd.existing_config = {}
+        return init_cmd
+
+    def test_parse_config_file_lowercases_keys(self):
+        with open(self.config_file, 'w', encoding='utf-8') as f:
+            f.write("IP=127.0.0.1\n")
+            f.write("PORT=5000\n")
+            f.write("enable_https=true\n")
+
+        init_cmd = self._create_init_command()
+        config = init_cmd._parse_config_file(init_cmd.config_file)
+
+        self.assertIn('ip', config)
+        self.assertIn('port', config)
+        self.assertEqual(config['ip'], '127.0.0.1')
+        self.assertEqual(config['port'], '5000')
+        self.assertNotIn('IP', config)
+        self.assertNotIn('PORT', config)
+
+    def test_parse_config_file_mixed_case_keys(self):
+        with open(self.config_file, 'w', encoding='utf-8') as f:
+            f.write("Agent_Approval_Enabled=true\n")
+
+        init_cmd = self._create_init_command()
+        config = init_cmd._parse_config_file(init_cmd.config_file)
+
+        self.assertIn('agent_approval_enabled', config)
+        self.assertNotIn('Agent_Approval_Enabled', config)
+
+    def test_save_config_preserves_comments_and_blank_lines(self):
+        init_cmd = self._create_init_command()
+
+        original = (
+            "# Copyright header line\n"
+            "\n"
+            "# Listening IP\n"
+            "ip=127.0.0.1\n"
+            "#ssl_crl_file=etc/ssl/revocationlist.crl\n"
+            "enable_https=true\n"
+            "\n"
+            "agent_approval_enabled=false\n"
+        )
+        with open(self.config_file, 'w', encoding='utf-8') as f:
+            f.write(original)
+
+        init_cmd.save_config_to_file({'ip': '192.168.1.1'})
+
+        with open(self.config_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        self.assertIn('# Copyright header line', content)
+        self.assertIn('# Listening IP', content)
+        self.assertIn('#ssl_crl_file=etc/ssl/revocationlist.crl', content)
+        self.assertIn('ip=192.168.1.1', content)
+        self.assertNotIn('ip=127.0.0.1', content)
+        self.assertIn('\n\n', content)
+        self.assertIn('agent_approval_enabled=false', content)
+
+    def test_save_config_case_insensitive_key_match(self):
+        init_cmd = self._create_init_command()
+
+        with open(self.config_file, 'w', encoding='utf-8') as f:
+            f.write("IP=127.0.0.1\n")
+            f.write("PORT=5000\n")
+            f.write("enable_https=true\n")
+
+        init_cmd.save_config_to_file({'ip': '10.0.0.1', 'port': '8080'})
+
+        with open(self.config_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        self.assertIn('IP=10.0.0.1', content)
+        self.assertIn('PORT=8080', content)
+        self.assertEqual(content.count('10.0.0.1'), 1)
+        self.assertEqual(content.count('8080'), 1)
+        self.assertNotIn('127.0.0.1', content)
+        self.assertNotIn('5000', content)
+
+    def test_save_config_no_duplicate_keys(self):
+        init_cmd = self._create_init_command()
+
+        with open(self.config_file, 'w', encoding='utf-8') as f:
+            f.write("enable_https=false\n")
+            f.write("use_vectordb=False\n")
+            f.write("agent_approval_enabled=false\n")
+
+        init_cmd.save_config_to_file({'enable_https': 'true'})
+
+        with open(self.config_file, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        https_lines = [l for l in lines if l.strip().startswith('enable_https')]
+        self.assertEqual(len(https_lines), 1)
+        self.assertIn('true', https_lines[0])
+
+        vectordb_lines = [l for l in lines if l.strip().startswith('use_vectordb')]
+        self.assertEqual(len(vectordb_lines), 1)
+        self.assertIn('False', vectordb_lines[0])
+
+    def test_save_persistence_config_case_insensitive(self):
+        persistence_file = os.path.join(self.temp_dir, "persistence.conf")
+
+        original = (
+            "# Persistence mode\n"
+            "PERSISTENCE.MODE=file\n"
+            "postgresql.host=localhost\n"
+        )
+        with open(persistence_file, 'w', encoding='utf-8') as f:
+            f.write(original)
+
+        init_cmd = InitCommand()
+        init_cmd.persistence_config_file = persistence_file
+        init_cmd.save_persistence_config_to_file({'persistence.mode': 'postgresql'})
+
+        with open(persistence_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        self.assertIn('PERSISTENCE.MODE=postgresql', content)
+        self.assertIn('postgresql.host=localhost', content)
+        self.assertIn('# Persistence mode', content)
+        self.assertEqual(content.count('postgresql'), 2)
+
+        os.remove(persistence_file)
 
 
 if __name__ == '__main__':

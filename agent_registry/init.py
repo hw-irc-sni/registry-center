@@ -30,7 +30,7 @@ class InitCommand:
                 line = line.strip()
                 if line and '=' in line and not line.startswith('#'):
                     key, _, value = line.partition('=')
-                    config[key.strip()] = value.strip()
+                    config[key.strip().lower()] = value.strip()
         return config
 
     def init_command(self):
@@ -86,9 +86,10 @@ class InitCommand:
             config['signature_validation_enabled'] = default_signature
             print(f"Signature validation set to default: {default_signature}")
 
-        print("\nConfigure JWK certificate for registry signature verification:")
-        jwk_config = self.config_jwk_cert()
-        config.update(jwk_config)
+        if config['registry.sign.enabled'] == 'true':
+            print("\nConfigure JWK certificate for registry signature verification:")
+            jwk_config = self.config_jwk_cert()
+            config.update(jwk_config)
 
         default_approval = self.existing_config.get('agent_approval_enabled', 'false')
         current_approval = default_approval
@@ -287,6 +288,8 @@ class InitCommand:
 
         path_obj = Path(path)
         if not path_obj.exists():
+            if not required:
+                return True, ""
             return False, f"File does not exist: {path}"
 
         if not path_obj.is_file():
@@ -355,20 +358,36 @@ class InitCommand:
         config_dir = os.path.dirname(self.config_file)
         os.makedirs(config_dir, exist_ok=True)
 
-        existing_config = {}
         if os.path.exists(self.config_file):
+            updated_keys = set()
+            new_lines = []
             with open(self.config_file, 'r', encoding='utf-8') as f:
                 for line in f:
-                    line = line.strip()
-                    if line and '=' in line:
-                        key, _, value = line.partition('=')
-                        existing_config[key.strip()] = value.strip()
+                    stripped = line.strip()
+                    if stripped and '=' in stripped and not stripped.startswith('#'):
+                        key = stripped.split('=', 1)[0].strip()
+                        key_lower = key.lower()
+                        if key_lower in config and key_lower not in updated_keys:
+                            new_lines.append(f"{key}={config[key_lower]}\n")
+                            updated_keys.add(key_lower)
+                            continue
+                        if key_lower in updated_keys:
+                            continue
+                    else:
+                        if not line.endswith('\n'):
+                            line += '\n'
+                    new_lines.append(line)
 
-        existing_config.update(config)
+            for key, value in config.items():
+                if key not in updated_keys:
+                    new_lines.append(f"{key}={value}\n")
 
-        with open(self.config_file, 'w', encoding='utf-8') as f:
-            for key, value in existing_config.items():
-                f.write(f"{key}={value}\n")
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                f.writelines(new_lines)
+        else:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                for key, value in config.items():
+                    f.write(f"{key}={value}\n")
 
         os.chmod(self.config_file, 0o600)
 
@@ -450,9 +469,12 @@ class InitCommand:
                     stripped = line.strip()
                     if stripped and '=' in stripped and not stripped.startswith('#'):
                         key = stripped.split('=', 1)[0].strip()
-                        if key in config:
-                            new_lines.append(f"{key}={config[key]}\n")
-                            updated_keys.add(key)
+                        key_lower = key.lower()
+                        if key_lower in config and key_lower not in updated_keys:
+                            new_lines.append(f"{key}={config[key_lower]}\n")
+                            updated_keys.add(key_lower)
+                            continue
+                        if key_lower in updated_keys:
                             continue
                     else:
                         if not line.endswith('\n'):

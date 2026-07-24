@@ -28,6 +28,7 @@ from common.util.app_config import get_root_path, load_configs
 
 # File permissions: 600 -> owner read/write only, others no access
 FILE_PERMISSION_MODE = 0o600
+IS_WINDOWS = os.name == 'nt'
 
 
 class LogLevel:
@@ -78,7 +79,8 @@ class AuditLogger:
         parent_path = os.path.join(get_root_path(), "log", "audit")
         audit_log_dir = Path(parent_path)
         audit_log_dir.mkdir(parents=True, exist_ok=True)
-        os.chmod(audit_log_dir, 0o700)
+        if not IS_WINDOWS:
+            os.chmod(audit_log_dir, 0o700)
         self.log_file = os.path.join(parent_path, "audit.log")
         self.lock = threading.Lock()
 
@@ -153,7 +155,8 @@ class AuditLogger:
         # 4. Create new log file
         try:
             open(self.log_file, 'w').close()
-            os.chmod(self.log_file, FILE_PERMISSION_MODE)
+            if not IS_WINDOWS:
+                os.chmod(self.log_file, FILE_PERMISSION_MODE)
         except Exception as e:
             logger.error(f"Error: failed to create new log file: {e}")
 
@@ -164,7 +167,8 @@ class AuditLogger:
             with open(self.log_file, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
             # Ensure permissions (especially on newly created files)
-            os.chmod(self.log_file, FILE_PERMISSION_MODE)
+            if not IS_WINDOWS:
+                os.chmod(self.log_file, FILE_PERMISSION_MODE)
 
 
 audit_logger = AuditLogger()

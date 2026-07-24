@@ -20,6 +20,7 @@ import json
 import os
 import re
 from pathlib import Path
+IS_WINDOWS = os.name == 'nt'
 from threading import Lock
 from typing import List, Dict, Tuple, Optional, Any
 
@@ -76,7 +77,8 @@ class RegistryCore:
         else:
             data_path = Path(get_root_path()) / "data"
             data_path.mkdir(parents=True, exist_ok=True)
-            os.chmod(data_path, 0o700)
+            if not IS_WINDOWS:
+                os.chmod(data_path, 0o700)
             file_storage_conf = {
                 'file.path': str(data_path / persistence_file),
                 'metadata.file': str(data_path / persistence_metadata_file),
