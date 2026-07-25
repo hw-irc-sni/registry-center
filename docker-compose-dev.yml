@@ -1,7 +1,7 @@
-# Local-dev override, auto-loaded by `docker compose up` alongside
-# docker-compose.yml (standard Compose behavior — no extra flags needed).
+# Development override for docker-compose.yml. Not auto-loaded — run with:
+#   docker compose -f docker-compose.yml -f docker-compose-dev.yml up -d
 #
-# No TLS certs are provisioned in this checkout, so this disables HTTPS
+# No TLS certs are provisioned in a fresh checkout, so this disables HTTPS
 # (which also cascades to disable client-cert verification, registry
 # signing, and signature validation in bin/entrypoint.sh). The base file's
 # 127.0.0.1-only port binding already limits exposure of the resulting
@@ -11,10 +11,10 @@
 # `python generate_selfsign_cert.py etc/ssl serverAuth` (see docs/en/Registry
 # Center Security Guide.md#self-signed-certificate-generation-tool), run
 # `python -m agent_registry.init` to wire up the paths, then run
-# `docker compose -f docker-compose.yml up` to skip this override entirely.
+# `docker compose -f docker-compose.yml up -d` to skip this override entirely.
 services:
   registry-center:
     environment:
-      - REGISTRY_ENABLE_HTTPS=false
+      - REGISTRY_ENABLE_HTTPS=${REGISTRY_ENABLE_HTTPS:-false}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/rest/v1/registry-center/agent-cards"]
