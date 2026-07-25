@@ -1,7 +1,7 @@
 services:
   registry-center:
     build: .
-    container_name: registry-center
+    container_name: openan-registry-center
     ports:
       - "127.0.0.1:5000:5000"
     volumes:
@@ -10,18 +10,19 @@ services:
       - ./etc/sign_cert:/opt/registry-center/etc/sign_cert
       - ./log:/opt/registry-center/log
     environment:
-      - REGISTRY_IP=0.0.0.0
-      - REGISTRY_PORT=5000
+      - REGISTRY_IP=${REGISTRY_IP:-0.0.0.0}
+      - REGISTRY_PORT=${REGISTRY_PORT:-5000}
       # Secure-by-default: requires real TLS certs under etc/ssl (see
       # docs/en/Registry Center Security Guide.md). For local dev without
-      # certs, docker-compose.override.yml (auto-loaded by `docker compose up`)
-      # flips this to false — see that file for details.
-      - REGISTRY_ENABLE_HTTPS=true
-      - REGISTRY_VERIFY_CLIENT=false
-      - REGISTRY_OWNER_ISOLATION_ENABLED=false
-      - REGISTRY_AGENT_APPROVAL_ENABLED=false
-      - REGISTRY_SIGNATURE_VALIDATION_ENABLED=false
-      - REGISTRY_FORWARDED_ALLOW_IPS=*
+      # certs, docker-compose-dev.yml (see README.md) flips this to false.
+      - REGISTRY_ENABLE_HTTPS=${REGISTRY_ENABLE_HTTPS:-true}
+      - REGISTRY_VERIFY_CLIENT=${REGISTRY_VERIFY_CLIENT:-false}
+      - REGISTRY_OWNER_ISOLATION_ENABLED=${REGISTRY_OWNER_ISOLATION_ENABLED:-false}
+      - REGISTRY_AGENT_APPROVAL_ENABLED=${REGISTRY_AGENT_APPROVAL_ENABLED:-false}
+      - REGISTRY_SIGNATURE_VALIDATION_ENABLED=${REGISTRY_SIGNATURE_VALIDATION_ENABLED:-false}
+      - REGISTRY_FORWARDED_ALLOW_IPS=${REGISTRY_FORWARDED_ALLOW_IPS:-*}
+    networks:
+      - openan-net
     healthcheck:
       test: ["CMD", "curl", "-kf", "https://localhost:5000/rest/v1/registry-center/agent-cards"]
       interval: 30s
@@ -36,14 +37,20 @@ services:
   #
   # postgres:
   #   image: postgres:15-alpine
-  #   container_name: registry-postgres
+  #   container_name: openan-registry-center-postgres
   #   environment:
-  #     - POSTGRES_DB=registry_center
-  #     - POSTGRES_USER=opena2a_t
-  #     - POSTGRES_PASSWORD=openA2A_T
+  #     - POSTGRES_DB=${DB_NAME:-registry_center}
+  #     - POSTGRES_USER=${DB_USERNAME:-opena2a_t}
+  #     - POSTGRES_PASSWORD=${DB_PASSWORD:-openA2A_T}
   #   volumes:
   #     - pgdata:/var/lib/postgresql/data
+  #   networks:
+  #     - openan-net
   #   restart: unless-stopped
   #
   # volumes:
   #   pgdata:
+
+networks:
+  openan-net:
+    external: true
