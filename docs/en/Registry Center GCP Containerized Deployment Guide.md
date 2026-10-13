@@ -181,16 +181,21 @@ Once deployed, you can manage Agent Cards through the following endpoints:
 | `PUT`    | `/rest/v1/registry-center/agent-cards/{org}/{name}`     | Update an Agent     |
 | `DELETE` | `/rest/v1/registry-center/agent-cards/{org}/{name}`     | Deregister an Agent |
 
-Example (registering an Agent):
+Example (registering a complete card in the explicit `-DevelopmentOnly` profile):
+
+This profile still requires Cloud Run IAM authentication. IAM is not a registry business identity and does not replace a registry Bearer when Token mode is separately enabled. Production deployment requires a verified identity gateway, not this demo. Prepare a complete AgentCard, sign it and configure verification material when card integrity is enabled; a body with only name/description is not a valid registration.
 
 ```powershell
-$body = @{
-    name = "my-agent"
-    description = "A test agent"
-} | ConvertTo-Json
-
-Invoke-RestMethod -Uri "https://xxxxx.run.app/rest/v1/registry-center/agent-cards" -Method Post -Body $body -ContentType "application/json"
+$serviceUrl = "https://<your-service>.run.app"
+$cloudRunToken = gcloud auth print-identity-token
+$headers = @{ Authorization = "Bearer $cloudRunToken" }
+$card = Get-Content -LiteralPath ./agent-card.signed.json -Raw | ConvertFrom-Json
+$body = @{ agentCards = @($card) } | ConvertTo-Json -Depth 30
+Invoke-RestMethod -Uri "$serviceUrl/rest/v1/registry-center/agent-cards" `
+    -Method Post -Headers $headers -Body $body -ContentType "application/json"
 ```
+
+For separately enabled registry Token authentication, put its token in `Authorization` and the Cloud Run IAM token in `X-Serverless-Authorization`. A 401/403 may precede schema validation; do not diagnose every failed request as 422 or disable integrity to make registration succeed.
 
 ---
 

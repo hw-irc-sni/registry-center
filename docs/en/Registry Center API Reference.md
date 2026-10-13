@@ -46,6 +46,34 @@ SPDX-License-Identifier: Apache-2.0
   the batch succeeded, `registeredAgents` / `updatedAgents` records that partial
   success. The batch is not an all-or-nothing transaction.
 
+### Transport, Caller Identity and Permissions
+
+HTTP/HTTPS, incoming client certificates, caller Token authentication, owner authorization and
+AgentCard JWS signatures are independent. Disabling peer-certificate verification does not disable authentication.
+
+| Listener | Caller identity | Operation boundary |
+| --- | --- | --- |
+| Main `/rest/v1/registry-center/*` | `owner.identity.mode=token`: Bearer validated by the configured `integration.auth.*` provider | Ordinary roles discover public cards; `vendor_agent` additionally writes/heartbeats its own cards; `nms_oss` has administrative access. Existing owner guards still apply. |
+| Main, certificate/proxy identity | Existing certificate or trusted proxy identity policy | Certificate identity requires HTTPS with client verification; only trust explicitly configured proxies. |
+| Integration `/integration/*` | Independently configured Token/mTLS provider | Role/operation-specific policy; this is not the main API port. Token acquisition is available only when the integration API/provider supports it. |
+
+Example main-port discovery (`REGISTRY_API_TOKEN` comes from your configured identity provider):
+
+```bash
+curl --cacert /secure/trust.cer \
+  -H "Authorization: Bearer ${REGISTRY_API_TOKEN}" \
+  https://registry.example/rest/v1/registry-center/agent-cards
+```
+
+401 means missing/invalid/expired credentials (or an independently failed card-signature check);
+403 means verified identity without role/owner permission; 503 means required authentication,
+signing or storage capability is unavailable. Provider failure does not become anonymous access.
+This service is not the orchestration center's web-account login server.
+
+The JWKS `/rest/v1/registry-center/keys` route is exempt from application Token authentication.
+That exemption cannot bypass TLS: when `verify_client=true`, every HTTPS connection, including JWKS,
+must present a valid client certificate. See [current transport details](../transport-runtime.md).
+
 ## Register AgentCard
 
 - Typical Scenario
@@ -259,7 +287,7 @@ SPDX-License-Identifier: Apache-2.0
 | Status Code | Description                          |
 |--------|--------------------------------------|
 | 201 | Registration successful.             |
-| 401 | Signature verification failed.       |
+| 401 | Caller authentication or card signature verification failed.       |
 | 413 | Request body too large.              |
 | 422 | Registration failed, AgentCard parameter validation failed. |
 | 409 | Registration failed, registration count exceeds limit or duplicate registration. |
@@ -699,7 +727,7 @@ SPDX-License-Identifier: Apache-2.0
     |--------|--------------------------------------|
     | 200 | Update successful.                   |
     | 400 | Parameter validation failed.         |
-    | 401 | Signature verification failed.       |
+    | 401 | Caller authentication or card signature verification failed.       |
     | 403 | Permission denied.                   |
 | 404 | Query failed, Agent not found.      |
     | 422 | Update failed, AgentCard parameter validation failed. |
@@ -915,6 +943,39 @@ SPDX-License-Identifier: Apache-2.0
   | 500 | Query failed, internal service error.      |
   | 503 | Service busy.                          |
 
+## Registration layer and layer-aware discovery
+
+Layer is registration metadata, not a signed AgentCard field. `agentCards` accepts either an ordinary AgentCard or a wrapper `{"agentCard": <complete signed card>, "layer": "OMC"}`. A declared layer must be a non-empty string after trimming, at most 64 characters. Missing layer for a new registration uses `unknown`; an update omitting layer preserves existing metadata. Do not alter the signed card when adding the wrapper.
+
+The ordinary `GET /rest/v1/registry-center/agent-cards` accepts an optional `layer` query filter, including with organization/name filters. `POST /agent-cards/semantic-query` also accepts `layer` and `topN` (1–50, default 10). Ordinary responses remain `agentCards`, without layer metadata.
+
+The following routes return registration metadata. In main-port Token mode they require an `nms_oss` administrator credential; ordinary discovery/vendor roles are not sufficient. Other identity modes continue to use their configured authentication policies. Application Token authorization never bypasses required mTLS.
+
+| Method | Path (under `/rest/v1/registry-center`) | Input | Result |
+| --- | --- | --- | --- |
+| POST | `/agent-cards-with-layer` | Optional layer; limit 1–1000 (default 100), offset >=0 (default 0); no task | agents, count, hasMore |
+| GET | `/agent-cards-with-layer/{organization}/{name}` | URL-encoded organization and name | agentCard, layer; 404 when not visible |
+| POST | `/agent-cards-with-layer/semantic-query` | Required non-empty task; optional layer, topN 1–50 (default 10) | agents, count |
+
+Only published records are visible; unhealthy records are additionally hidden when the health-hiding policy is enabled. Semantic queries require usable model configuration; layer metadata may require storage migration. Invalid JSON/parameters return 422, role denial 403, rate limiting 429, unavailable storage/migration or concurrency 503. General failures return 500; authentication may fail before request validation.
+
+Example (an existing administrative token, trusted HTTPS deployment):
+
+```http
+POST /rest/v1/registry-center/agent-cards-with-layer HTTP/1.1
+Host: registry.example.test
+Authorization: Bearer <nms-oss-token>
+Content-Type: application/json
+
+{"layer":"OMC","limit":20,"offset":0}
+```
+
+```json
+{"agents":[],"count":0,"hasMore":false}
+```
+
+Non-empty `agents` items have `{"agentCard": <complete card>, "layer": "OMC"}`. The detail route returns one such item rather than an array. The semantic route has no `hasMore` field. Do not substitute a truncated response card as a registration request.
+
 ## Get Public Key Information
 
 - Typical Scenario
@@ -928,7 +989,7 @@ SPDX-License-Identifier: Apache-2.0
 - Interface Constraints
 
   - Rate limiting: 10 requests/second.
-  - Authentication: No client certificate authentication or user authentication required.
+  - Authentication: exempt from application Token authentication; HTTPS with `verify_client=true` still requires a client certificate at the TLS handshake.
 
 - Method
 
@@ -993,10 +1054,9 @@ SPDX-License-Identifier: Apache-2.0
   | Status Code | Description                     |
   |--------|---------------------------|
   | 200 | Retrieval successful.              |
-  | 422 | Retrieval failed, the request body is not a JSON object. |
   | 429 | Retrieval failed, rate limit exceeded. |
   | 500 | Retrieval failed, internal service error. |
-  | 503 | Retrieval failed, the model is unavailable or returned an unusable selection. |
+  | 503 | Signing is disabled, signer unavailable or certificate loading failed. |
 
 ## Report Agent Heartbeat
 

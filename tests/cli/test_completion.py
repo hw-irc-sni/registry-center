@@ -24,6 +24,7 @@ import pytest
 from argparse import Namespace
 
 from agent_registry.cli.core import CLI, InteractiveCLI
+from agent_registry.cli.constants import CLI_VERSION
 from agent_registry.cli.base import BaseCommand
 from agent_registry.cli.registry import CommandRegistry
 
@@ -380,7 +381,7 @@ class TestCommandExecution:
         cli._execute_command("-v")
         captured = capsys.readouterr()
         assert "agent-registry" in captured.out
-        assert "v1.0.0" in captured.out
+        assert f"agent-registry v{CLI_VERSION}" in captured.out
 
 
 class TestCLI:

@@ -177,16 +177,21 @@ Invoke-RestMethod -Uri "https://xxxxx.run.app/rest/v1/registry-center/agent-card
 | `PUT` | `/rest/v1/registry-center/agent-cards/{org}/{name}` | 更新 Agent |
 | `DELETE` | `/rest/v1/registry-center/agent-cards/{org}/{name}` | 注销 Agent |
 
-示例（注册一个 Agent）：
+示例（显式 `-DevelopmentOnly` 配置下注册完整卡片）：
+
+该演示仍要求 Cloud Run IAM 认证；IAM 不是注册中心业务身份，不能替代单独开启的注册中心 Token。生产需部署已验证身份网关，不使用该演示直接上线。准备完整 AgentCard，卡片完整性校验开启时还需签名及配置验签材料；只有 name/description 的请求不符合注册契约。
 
 ```powershell
-$body = @{
-    name = "my-agent"
-    description = "A test agent"
-} | ConvertTo-Json
-
-Invoke-RestMethod -Uri "https://xxxxx.run.app/rest/v1/registry-center/agent-cards" -Method Post -Body $body -ContentType "application/json"
+$serviceUrl = "https://<your-service>.run.app"
+$cloudRunToken = gcloud auth print-identity-token
+$headers = @{ Authorization = "Bearer $cloudRunToken" }
+$card = Get-Content -LiteralPath ./agent-card.signed.json -Raw | ConvertFrom-Json
+$body = @{ agentCards = @($card) } | ConvertTo-Json -Depth 30
+Invoke-RestMethod -Uri "$serviceUrl/rest/v1/registry-center/agent-cards" `
+    -Method Post -Headers $headers -Body $body -ContentType "application/json"
 ```
+
+若另启注册中心 Token 认证，Authorization 填业务 Token，X-Serverless-Authorization 填 Cloud Run IAM Token。401/403 可能先于请求体校验，不能将所有失败归为 422，也不应为了注册成功关闭完整性校验。
 
 ---
 

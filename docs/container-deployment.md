@@ -14,9 +14,9 @@ configuration, `.env`, reviews and frontend dependencies are not build inputs.
 The application runs as UID **10001**. Prepare mounted data/log/config directories
 for this UID. If mounting `etc/conf`, copy `server.conf.example` and
 `persistence.conf.example` to the corresponding `.conf` filenames and include
-`server.properties` and `log_config.conf`. The entrypoint updates `.conf` files,
-so **this config mount must be writable**, with restricted permissions; it is
-distinct from the read-only TLS and model mounts. Never overwrite real local
+`server.properties` and `log_config.conf`. Existing configuration can be mounted
+read-only: environment overrides are applied in memory, not written to `.conf`.
+Data, log and run directories must be writable by the container UID. Never overwrite real local
 configuration with a template automatically.
 
 `server.conf` contains feature switches and deployment/access settings;
@@ -31,8 +31,8 @@ The entrypoint does not copy these policies into `server.conf`.
 `server.properties` 后加载覆盖的历史行为。迁移时保留实际生效值，不用模板默认值
 覆盖现场策略。环境变量最终覆盖两个文件，入口脚本不会将业务参数写回 `server.conf`。
 
-容器用户 UID 为 **10001**。配置目录需可写（入口脚本写入平台覆盖项），数据和日志
-目录同样需有相应权限。证书和模型配置可以只读挂载；证书必须容器用户可读，且
+容器用户 UID 为 **10001**。已有配置可只读挂载，环境覆盖只在内存生效；数据、日志和 run
+目录必须允许该 UID 写入。证书和模型配置可以只读挂载；证书必须容器用户可读，且
 不得向其他用户公开或允许组/其他用户写入。加密配置需注入本部署自己的
 `REGISTRY_CIPHER_KEY` 或只读 `REGISTRY_CIPHER_KEY_FILE`；镜像不会携带开发者的 key。
 
@@ -49,8 +49,8 @@ The entrypoint does not copy these policies into `server.conf`.
   canonical owner-mode environment variable that hides a legacy strict override.
 - `init` runs `python -m agent_registry.init --non-interactive`: validates
   existing configuration, identity settings and TLS material without stdin.
-  The Python validator does not write configuration; the container entrypoint
-  still applies runtime overrides to `.conf` files before invoking it.
+  Neither the Python validator nor the entrypoint rewrites existing configuration;
+  Python applies runtime overrides in memory.
   It does **not** generate certificates, migrate a
   database, test DB connectivity or validate optional model/signing services.
   `serve` performs the actual storage readiness check before binding a port.
@@ -61,7 +61,7 @@ The entrypoint does not copy these policies into `server.conf`.
   name, never written into YAML. Embedding/AOC requires the complete model file.
 
 `PORT` 优先级最高；参数错误立即报错。`init` 是无交互配置校验，不是发证或建库命令；
-Python 校验本身不写配置，但容器入口仍先写入运行时覆盖项。
+Python 校验与容器入口均不改写已有配置，运行时覆盖在内存生效。
 默认保持 HTTPS、mTLS、所有者隔离；仅关闭 HTTPS 不会自动关闭其他安全策略。
 
 ## Production / 生产部署
@@ -129,4 +129,4 @@ precedence, real HTTP CRUD and read-only mTLS startup/ownership/health probes.
 The Ubuntu `container-smoke` CI job executes this test. Bash contract/unit tests
 are useful locally but are not proof that the Linux image built or ran.
 
-Database connections use [the unified db directory](database-configuration.md). Mount db read-only; DB_* values are consumed directly by Python, not written into persistence.conf. The enclosing server config mount remains writable for entrypoint overrides.
+Database connections use [the unified db directory](database-configuration.md). Mount db read-only; DB_* values are consumed directly by Python, not written into persistence.conf. Existing server configuration can also be mounted read-only. Only opt-in model-file generation needs a writable destination.

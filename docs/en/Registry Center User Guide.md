@@ -55,7 +55,7 @@ CLI client startup example:
 # CLI command client startup and entering the interface
 [user@host registry-center-main]# python -m agent_registry.cli
 
-agent-registry v1.0.0
+agent-registry v1.0.1
 Type 'cmds' for available commands, 'exit' to quit.
 
 agent-registry>...
@@ -225,16 +225,16 @@ agent-registry>
 
 ## API Capabilities
 
-- **Register AgentCard**: Supports registering Agents from different vendors into the center for unified management. See [Registry Center API Reference](./Registry Center API Reference.md#register-agentcard).
-- **Query AgentCard List**: Query a list of AgentCards matching specified criteria. See [Registry Center API Reference](./Registry Center API Reference.md#query-agentcard-list).
-- **Get Specific AgentCard**: Precisely locate a unique AgentCard instance by AgentCard name and organization. See [Registry Center API Reference](./Registry Center API Reference.md#get-specific-agentcard).
-- **Update Specific AgentCard**: Update the information of a specific AgentCard. See [Registry Center API Reference](./Registry Center API Reference.md#update-specific-agentcard).
-- **Delete Specific AgentCard**: Delete an AgentCard that is no longer in use. See [Registry Center API Reference](./Registry Center API Reference.md#delete-specific-agentcard).
-- **Semantic Search AgentCard**: Search for matching AgentCards based on natural language semantics. See [Registry Center API Reference](./Registry Center API Reference.md#semantic-search-agentcard).
-- **Agent Heartbeat Reporting**: Agents periodically report liveness, and the Registry Center maintains health status. See [Registry Center API Reference](./Registry Center API Reference.md#report-agent-heartbeat).
-- **Agent Health Status Query**: Query the health status of heartbeat-monitored Agents. See [Registry Center API Reference](./Registry Center API Reference.md#query-agent-health-status-list).
-- **Change Subscription Management**: Create, query, and delete change broadcast subscriptions. See [Registry Center API Reference](./Registry Center API Reference.md#create-change-subscription).
-- **Change Reconciliation Query**: Incrementally pull change events by version. See [Registry Center API Reference](./Registry Center API Reference.md#change-reconciliation-query).
+- **Register AgentCard**: Supports registering Agents from different vendors into the center for unified management. See [Registry Center API Reference](./Registry%20Center%20API%20Reference.md#register-agentcard).
+- **Query AgentCard List**: Query a list of AgentCards matching specified criteria. See [Registry Center API Reference](./Registry%20Center%20API%20Reference.md#query-agentcard-list).
+- **Get Specific AgentCard**: Precisely locate a unique AgentCard instance by AgentCard name and organization. See [Registry Center API Reference](./Registry%20Center%20API%20Reference.md#query-specific-agentcard).
+- **Update Specific AgentCard**: Update the information of a specific AgentCard. See [Registry Center API Reference](./Registry%20Center%20API%20Reference.md#update-specific-agentcard).
+- **Delete Specific AgentCard**: Delete an AgentCard that is no longer in use. See [Registry Center API Reference](./Registry%20Center%20API%20Reference.md#delete-specific-agentcard).
+- **Semantic Search AgentCard**: Search for matching AgentCards based on natural language semantics. See [Registry Center API Reference](./Registry%20Center%20API%20Reference.md#semantic-query-agentcard).
+- **Agent Heartbeat Reporting**: Agents periodically report liveness, and the Registry Center maintains health status. See [Registry Center API Reference](./Registry%20Center%20API%20Reference.md#report-agent-heartbeat).
+- **Agent Health Status Query**: Query the health status of heartbeat-monitored Agents. See [Registry Center API Reference](./Registry%20Center%20API%20Reference.md#query-agent-health-status-list).
+- **Change Subscription Management**: Create, query, and delete change broadcast subscriptions. See [Registry Center API Reference](./Registry%20Center%20API%20Reference.md#create-change-subscription).
+- **Change Reconciliation Query**: Incrementally pull change events by version. See [Registry Center API Reference](./Registry%20Center%20API%20Reference.md#change-reconciliation-query).
 
 ## Appendix
 

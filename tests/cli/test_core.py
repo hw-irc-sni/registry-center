@@ -25,6 +25,7 @@ import unittest.mock
 from argparse import Namespace
 
 from agent_registry.cli.core import CLI, InteractiveCLI
+from agent_registry.cli.constants import CLI_VERSION
 from agent_registry.cli.base import BaseCommand
 from agent_registry.cli.exceptions import CLIError, ValidationError
 from agent_registry.cli.registry import CommandRegistry
@@ -290,7 +291,7 @@ class TestCommandExecution:
         result = cli._execute_command("-v")
         assert result == 0
         captured = capsys.readouterr()
-        assert "v1.0.0" in captured.out
+        assert f"agent-registry v{CLI_VERSION}" in captured.out
     
     def test_execute_validation_fail(self, capsys):
         """validation failure"""

@@ -89,48 +89,49 @@ source .venv/bin/activate      # Linux
 # 安装依赖
 pip install -r requirements.txt
 
-# 交互式配置向导（证书、存储、安全选项）
+# 仅开发使用自签材料；生产提供受管理的证书/密钥，已有输出不覆盖。
+# TLS 与数据签名分目录保存。
+python -m generate_selfsign_cert etc/ssl serverAuth
+python -m generate_selfsign_cert etc/ssl serverAuth --issue-client demo
+python -m generate_selfsign_cert etc/sign_cert dataSigning
+# 检查公开 server.conf.example / persistence.conf.example，仅缺文件时复制，不覆盖现场。
+# 按安全指南设置实际 jwk_* 路径；init 的历史 sign_* 键不生效。
+# 启动前配置 models.yaml、具名密钥及选定数据库 profile。
 python -m agent_registry.init
 
 # 启动服务
 python -m agent_registry.start
 ```
 
-服务默认监听 `https://127.0.0.1:5000`。快速测试可关闭 HTTPS：
-
-```bash
-python -m agent_registry.init    # 选择 enable_https = false
-python -m agent_registry.start   # 启动在 http://127.0.0.1:5000
-```
+公开配置使用 5000 端口 HTTPS，业务调用前核对 CA/SAN 与客户端身份。单改 enable_https=false 不是完整 HTTP 配置：证书所有者身份需要 mTLS。要在 HTTP 下认证调用者，使用 owner.identity.mode=token 并配置对应认证 provider，传输校验与应用授权分开设置。参见[传输策略](docs/transport-runtime.md)与安全能力指南，不为了跑通示例关闭卡片完整性或调用者授权。
 
 Docker/Podman 打包、运行时凭据挂载、端口优先级及非交互初始化请参阅
 [容器部署指南](docs/container-deployment.md)。
 
 ### 注册第一个 Agent
 
-```bash
-curl -X POST http://127.0.0.1:5000/rest/v1/registry-center/agent-cards \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agentCards": [{
-      "name": "My Agent",
-      "description": "一个示例 Agent。",
-      "version": "1.0.0",
-      "provider": {"organization": "MyOrg", "url": "https://example.com"},
-      "capabilities": {"streaming": true, "pushNotifications": false},
-      "skills": [{
-        "id": "example-skill",
-        "name": "示例技能",
-        "description": "演示基本的 Agent 注册流程。"
-      }],
-      "supportedInterfaces": [{
-        "url": "http://127.0.0.1:8080/",
-        "protocolBinding": "HTTP+JSON",
-        "protocolVersion": "1.0.0"
-      }]
-    }]
-  }'
+按完整 AgentCard 契约准备 agent-card.signed.json，按安全能力指南配置注册 Agent 的验签公钥/JKU，并配置内容安全模型。注册中心 dataSigning 密钥用于中心输出签名，不替代注册 Agent 自身签名。开启审核时，需发布后才能在发现接口查到卡片。
+
+上述开发 mTLS 配置可这样调用；后续所有者操作需使用相同已验证客户端身份：
+
+```python
+import json
+import requests
+
+with open("agent-card.signed.json", encoding="utf-8") as source:
+    card = json.load(source)
+response = requests.post(
+    "https://127.0.0.1:5000/rest/v1/registry-center/agent-cards",
+    json={"agentCards": [card]},
+    verify="etc/ssl/trust.cer",
+    cert=("etc/ssl/demo-client.cer", "etc/ssl/demo-client.key"),
+    timeout=30,
+)
+response.raise_for_status()
+print(response.status_code)
 ```
+
+Token 模式另带有权限的 vendor/admin Bearer；HTTPS 的 verify_client=false 只取消客户端证书要求，不取消应用身份或卡片验签。该示例要求已准备签名卡片/provider，不是匿名无签名注册捷径。
 
 ## 架构
 
@@ -151,7 +152,7 @@ flowchart TB
     subgraph storage["存储后端"]
         direction LR
         file[("文件存储<br/>JSON")]
-        pg[("PostgreSQL")]
+        pg[("SQL authority<br/>PostgreSQL / MySQL<br/>GaussDB / SQLite")]
         milvus[("Milvus<br/>向量数据库")]
     end
 
@@ -201,7 +202,7 @@ flowchart TB
 |----------|------|
 | `etc/conf/server.conf` | 功能开关与部署接入信息：IP、端口、TLS/凭据引用、IAM 地址和身份模式 |
 | `etc/conf/server.properties` | 运行参数与业务策略：TLS 协议/密码套件、资源限额、心跳周期、通知重试及 OAuth 缓存/scope 策略 |
-| `etc/conf/persistence.conf` | 存储后端：`file`（默认）、`postgresql` |
+| `etc/conf/persistence.conf` | 存储后端：`file`（默认）、`sqlite`、`postgresql`、`gauss`、`mysql` |
 | `etc/conf/log_config.conf` | 审计日志轮转参数（文件大小、备份数量） |
 | `.env` | 本地密钥（Git 忽略）；模型定义见 `etc/config/models.yaml` |
 

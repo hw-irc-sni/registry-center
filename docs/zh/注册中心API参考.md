@@ -33,8 +33,8 @@ SPDX-License-Identifier: Apache-2.0
   - **公钥管理**：提供注册中心签名公钥的获取接口。
   - **Agent心跳上报**：Agent周期性上报存活状态，注册中心据此维护健康状态。
   - **Agent健康状态查询**：查询心跳监控的Agent健康状态列表。
-  - **变更订阅管理**：创建、查询、删除注册表变更广播订阅。
-  - **变更对账查询**：按版本号拉取注册表变更事件，用于订阅方补齐数据。
+  - **变更订阅管理**：创建、查询、删除注册中心变更广播订阅。
+  - **变更对账查询**：按版本号拉取注册中心变更事件，用于订阅方补齐数据。
 
 ### 约束与限制
 
@@ -44,6 +44,33 @@ SPDX-License-Identifier: Apache-2.0
   schema。PUT 中每张 Card 的 `name`、`provider.organization` 必须与 URL 一致，
   不承担身份重命名，也不会改写已签名正文。不合法条目返回 422；此前条目已成功
   时，`registeredAgents` / `updatedAgents` 保留部分成功记录，整批并非全有或全无事务。
+
+### 传输、调用者身份与权限
+
+HTTP/HTTPS、入站客户端证书、调用者 Token、所有者授权与 AgentCard JWS 签名是独立职责。
+关闭对端证书校验不等于关闭认证。
+
+| 监听器 | 调用者身份 | 操作边界 |
+| --- | --- | --- |
+| 主端口 `/rest/v1/registry-center/*` | `owner.identity.mode=token`：由 `integration.auth.*` provider 校验 Bearer | 普通角色发现公开卡片；`vendor_agent` 还可写入/心跳自己的卡片；`nms_oss` 可管理。原有所有者守卫仍执行。 |
+| 主端口证书/代理模式 | 现有证书或受信代理身份策略 | 证书身份要求 HTTPS 与客户端校验；代理必须显式受信。 |
+| 集成端口 `/integration/*` | 独立配置的 Token/mTLS provider | 按角色和操作授权，不是主端口；Token 获取仅在集成 API/provider 支持时提供。 |
+
+主端口发现示例（`REGISTRY_API_TOKEN` 由已配置的身份系统提供）：
+
+```bash
+curl --cacert /secure/trust.cer \
+  -H "Authorization: Bearer ${REGISTRY_API_TOKEN}" \
+  https://registry.example/rest/v1/registry-center/agent-cards
+```
+
+401 表示缺失/无效/过期凭据，也可能是独立的卡片验签失败；403 表示已认证但角色/所有权不允许；
+503 表示认证、签名或存储等必要能力不可用。provider 故障不会放行匿名请求。
+注册中心不是编排中心的网页登录账号服务。
+
+JWKS `/rest/v1/registry-center/keys` 免应用 Token 认证，但不绕过 TLS：
+`verify_client=true` 时所有 HTTPS 连接（含 JWKS）仍须客户端证书。
+详见[当前传输契约](../transport-runtime.md)。
 
 ## 注册AgentCard
 
@@ -148,7 +175,7 @@ SPDX-License-Identifier: Apache-2.0
 
 - 请求示例
 
-    ```json
+    ```http
     POST /rest/v1/registry-center/agent-cards HTTP/1.1
     Host: your-domain.com
     Content-Type: application/json
@@ -269,7 +296,7 @@ SPDX-License-Identifier: Apache-2.0
 | 状态码 | 说明                    |
 |--------|-----------------------|
 | 201 | 注册成功。                 |
-| 401 | 签名验证失败。               |
+| 401 | 调用者认证或卡片签名验证失败。               |
 | 413 | 请求体过大。                |
 | 422 | 注册失败，AgentCard参数校验失败。 |
 | 409 | 注册失败，注册数量超出上限或重复注册。   |
@@ -315,7 +342,7 @@ SPDX-License-Identifier: Apache-2.0
 
   - 查询所有Agent
 
-    ```json
+    ```http
     GET /rest/v1/registry-center/agent-cards HTTP/1.1
     Host: your-domain.com
     Content-Type: application/json
@@ -323,7 +350,7 @@ SPDX-License-Identifier: Apache-2.0
 
   - 按名称查询
 
-    ```json
+    ```http
     GET /rest/v1/registry-center/agent-cards?name=RAN%20Energy%20Saving%20Agent HTTP/1.1
     Host: your-domain.com
     Content-Type: application/json
@@ -331,7 +358,7 @@ SPDX-License-Identifier: Apache-2.0
 
   - 按组织机构精确查询
 
-    ```json
+    ```http
     GET /rest/v1/registry-center/agent-cards?organization=Org HTTP/1.1
     Host: your-domain.com
     Content-Type: application/json
@@ -339,7 +366,7 @@ SPDX-License-Identifier: Apache-2.0
 
   - 组合条件查询（AND）
 
-    ```json
+    ```http
     GET /rest/v1/registry-center/agent-cards?name=RAN%20Energy%20Saving%20Agent&organization=Org HTTP/1.1
     Host: your-domain.com
     Content-Type: application/json
@@ -347,7 +374,7 @@ SPDX-License-Identifier: Apache-2.0
 
   - 按层级查询
 
-    ```json
+    ```http
     GET /rest/v1/registry-center/agent-cards?layer=OMC HTTP/1.1
     Host: your-domain.com
     Content-Type: application/json
@@ -718,7 +745,7 @@ SPDX-License-Identifier: Apache-2.0
     |--------|-----------------------|
     | 200 | 修改成功。                 |
     | 400 | 参数校验失败。               |
-    | 401 | 签名验证失败。               |
+    | 401 | 调用者认证或卡片签名验证失败。               |
     | 403 | 权限拒绝。                 |
     | 404 | 修改失败，Agent未找到。        |
     | 422 | 修改失败，AgentCard参数校验失败。 |
@@ -833,7 +860,7 @@ SPDX-License-Identifier: Apache-2.0
 
   - 基本检索
 
-    ```json
+    ```http
     POST /rest/v1/registry-center/agent-cards/semantic-query HTTP/1.1
     Host: your-domain.com
     Content-Type: application/json
@@ -936,13 +963,15 @@ SPDX-License-Identifier: Apache-2.0
 
 ## 查询带层级的AgentCard
 
+主端口 Token 模式下，三个带层级元数据接口均要求 `nms_oss` 管理员凭据，普通发现/vendor 角色会返回 403；身份认证与 mTLS 分开执行。只返回 published 卡片，是否隐藏不健康卡片取决于健康隐藏开关。下面响应示例中的简化 AgentCard 仅展示返回形态，不可直接用于注册。
+
 - 典型场景
 
     调用方需要按注册层级筛选Agent，并同时获取AgentCard及其注册元数据时，使用该接口。
 
 - 功能描述
 
-    按层级、分页参数查询已发布且健康的Agent。`layer`缺省时不限制层级；提供`layer`时按字符串精确匹配。响应中的`agentCard`内容与注册时保存的AgentCard一致，层级作为同级字段返回。
+    按层级、分页参数查询已发布且符合健康可见性策略的 Agent。`layer`缺省时不限制层级；提供`layer`时按字符串精确匹配。响应中的`agentCard`内容与注册时保存的AgentCard一致，层级作为同级字段返回。
 
 - 调用方法
 
@@ -964,7 +993,7 @@ SPDX-License-Identifier: Apache-2.0
 
 - 请求示例
 
-    ```json
+    ```http
     POST /rest/v1/registry-center/agent-cards-with-layer HTTP/1.1
     Host: your-domain.com
     Content-Type: application/json
@@ -1023,7 +1052,7 @@ SPDX-License-Identifier: Apache-2.0
 
 - 功能描述
 
-    按`organization`和`name`精确查询一个已发布且健康的Agent。查询不到时返回404。
+    按`organization`和`name`精确查询一个已发布且符合健康可见性策略的 Agent。查询不到时返回404。
 
 - 调用方法
 
@@ -1039,7 +1068,7 @@ SPDX-License-Identifier: Apache-2.0
 
 - 请求示例
 
-    ```json
+    ```http
     GET /rest/v1/registry-center/agent-cards-with-layer/Org/RAN%20Energy%20Saving%20Agent HTTP/1.1
     Host: your-domain.com
     Content-Type: application/json
@@ -1069,7 +1098,7 @@ SPDX-License-Identifier: Apache-2.0
   | 状态码 | 说明 |
   |--------|------|
   | 200 | 查询成功。 |
-  | 404 | Agent不存在、未发布或不健康。 |
+  | 404 | Agent 不存在、未发布或被健康策略隐藏。 |
   | 503 | 服务繁忙。 |
 
 ## 按层级语义检索AgentCard
@@ -1102,7 +1131,7 @@ SPDX-License-Identifier: Apache-2.0
 
 - 请求示例
 
-    ```json
+    ```http
     POST /rest/v1/registry-center/agent-cards-with-layer/semantic-query HTTP/1.1
     Host: your-domain.com
     Content-Type: application/json
@@ -1162,7 +1191,7 @@ SPDX-License-Identifier: Apache-2.0
 - 接口约束
 
   - 接口流控：10次/秒。
-  - 接口认证：不需要客户端证书认证，不需要用户认证。
+  - 接口认证：免应用 Token 认证；HTTPS 配置 `verify_client=true` 时，TLS 握手仍须有效客户端证书。
 
 - 调用方法
 
@@ -1227,10 +1256,9 @@ SPDX-License-Identifier: Apache-2.0
   | 状态码 | 说明           |
   |--------|--------------|
   | 200 | 获取成功。        |
-  | 422 | 获取失败，请求体不是 JSON 对象。 |
   | 429 | 获取失败，超过流控限制。 |
   | 500 | 获取失败，服务内部错误。 |
-  | 503 | 获取失败，模型不可用或返回了不可用的选择结果。 |
+  | 503 | 签名未启用、签名器不可用或证书加载失败。 |
 
 ## Agent心跳上报
 
@@ -1392,7 +1420,7 @@ SPDX-License-Identifier: Apache-2.0
 
 - 典型场景
 
-    服务运营方需要在注册表数据变化（注册、更新、注销、健康状态变化）时收到实时通知，先通过该接口登记回调地址。
+    服务运营方需要在注册中心数据变化（注册、更新、注销、健康状态变化）时收到实时通知，先通过该接口登记回调地址。
 
 - 功能描述
 

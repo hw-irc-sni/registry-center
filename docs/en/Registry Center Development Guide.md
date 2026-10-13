@@ -26,7 +26,7 @@ Registry Center is a service focused on unified Agent management, enabling users
 
 ### Functional Limitations
 
-- This project is intended as a functional module only, not a complete system. The module itself does not provide login authentication, authorization, user management, audit logging, encryption/decryption, key management, database, or other capabilities. These security infrastructures must be provided by the customer system. Hook methods have been reserved in the source code for secondary customization.
+- This component is not a complete IAM/user-management system. It provides Token/mTLS integration, ownership and role enforcement, audit logging, encryption hooks and storage backends. Deployments must supply the identity provider, certificates/keys and databases; see the Security and Integration Guides for the independent listener policies.
 - Registered Agents are shared resources by default: read paths expose only cards whose status is `published`. Ownership enforcement (`owner.isolation.enabled`) is off by default; when enabled, the owner comes from the verified TLS client certificate or an explicitly trusted proxy, and cards without an owner require administrative ownership assignment. See the [Security Guide](Registry%20Center%20Security%20Guide.md) for the identity trust chain.
 - AgentCards registered with this project must not contain personal data such as phone numbers, or sensitive information such as passwords or credentials, as doing so poses a risk of information leakage.
 - This project only supports AgentCard registration in Chinese and English.
@@ -73,7 +73,7 @@ Registry Center is a service focused on unified Agent management, enabling users
 - OS: Linux (production environment); Windows for development and debugging
 - Python Version: 3.12+
 - Network: IPv4 environment
-- Storage: Supports file storage, PostgreSQL (SQLite and GaussDB code reserved; the current initialization tool only supports file and postgresql)
+- Storage: The initializer accepts file, postgresql, mysql, gauss and sqlite; prepare the selected connection profile and driver before startup.
 
 ### Setting Up the Environment
 
@@ -112,7 +112,7 @@ Registry Center is a service focused on unified Agent management, enabling users
     - Signing certificate configuration
     - Signature verification toggle
     - Agent approval toggle
-    - Storage mode configuration (file/postgresql)
+    - Storage mode configuration (file/postgresql/mysql/gauss/sqlite)
 
     Configuration file paths:
     - Service configuration: `etc/conf/server.conf`
@@ -245,7 +245,7 @@ Agent registration development flow:
 | POST /rest/v1/registry-center/agent-cards/semantic-query | Semantic search for AgentCards |
 | GET /rest/v1/registry-center/keys | Get public key information |
 
-For detailed interface parameters, please refer to [Registry Center API Reference](./Registry Center API Reference.md).
+For detailed interface parameters, please refer to [Registry Center API Reference](./Registry%20Center%20API%20Reference.md).
 
 ### Development Steps
 
@@ -290,7 +290,7 @@ For detailed interface parameters, please refer to [Registry Center API Referenc
     - The combination of `name` and `provider.organization` serves as the unique identifier and cannot be registered more than once.
     - `description` length limit: 1~1000 characters.
     - `skills`: maximum 100, each skill description up to 4096 characters.
-    - Prompt injection keywords and high-risk skill descriptions are prohibited. See [AgentCard Security Specification](../../design/AgentCard_Security_Specification.md) for details.
+    - Prompt injection keywords and high-risk skill descriptions are prohibited. See [AgentCard Security Specification](./Registry%20Center%20Security%20Guide.md) for details.
 
 2. Generate a signature (optional)
 
@@ -750,7 +750,7 @@ The system adopts a configuration-driven, single generic HTTP client architectur
 | GenericLLM | The concrete LLM implementation, driven by provider profiles |
 | ModelConfig | Structured model settings for each capability |
 | AUTH_STRATEGIES | Pluggable authentication strategy registry (dict), add custom sign/auth functions as needed |
-| model_sources.py | Environment settings source and extensible provider profiles |
+| model_sources.py | models.yaml source, named secret references and extensible provider profiles |
 
 ```
 ┌─────────────────────┐
@@ -768,7 +768,7 @@ The system adopts a configuration-driven, single generic HTTP client architectur
 │    GenericLLM       │◄── Single implementation, no inheritance
 │ (config-driven HTTP)│
 └──────────┬──────────┘
-           ├─── Reads environment settings (ModelConfig)
+           ├─── Reads models.yaml settings and named environment secrets (ModelConfig)
            ├─── Selects auth strategy (AUTH_STRATEGIES)
            ├─── Renders body template ($VARIABLE substitution)
            └─── Parses response (dot/bracket path navigation)
@@ -777,9 +777,10 @@ The system adopts a configuration-driven, single generic HTTP client architectur
 **Directory Structure:**
 ```
 {install_dir}/registry-center/
+├── etc/config/
+│   ├── models.yaml.example             # Public template; actual models.yaml is private
+│   └── README_en.md                    # Model settings guide
 ├── common/
-│   ├── config/
-│   │      └── README_en.md              # LLM model settings guide
 │   ├── custom/
 │   │      ├── __init__.py               # Custom handler registration file (create by user)
 │   │      ├── interface_type.py         # Interface type enumeration
@@ -986,7 +987,7 @@ Restart the service after changes; model clients are cached. Use `python -m scri
 | agent_approval_enabled | Enable the manual AgentCard approval workflow | false |
 | owner.isolation.enabled | Enable owner isolation on AgentCard writes | true |
 | owner.validation.mode | Owner validation: `strict` (CN format check plus verified identity) or `relaxed` (CN format check skipped) | relaxed |
-| owner.identity.mode | Caller identity source: `certificate` or `trusted_proxy` | certificate |
+| owner.identity.mode | Caller identity source: `certificate`, `trusted_proxy`, `token` or `none` | certificate |
 | owner.trusted.proxy.ips | Comma-separated proxy IPs allowed to assert `X-SSL-Client-DN` when `owner.identity.mode=trusted_proxy`; empty ignores the header | empty |
 | startup.strict.identity | Abort startup when the identity configuration cannot verify callers | false |
 | integration.enabled | Enable the optional third-party HTTPS listener | false |
@@ -1132,7 +1133,6 @@ are not imported as defaults. Persistence file placeholders are resolved before
 |------------|-------------|
 | SIG001 | signatures field missing |
 | SIG005 | Signature verification failed |
-| SIG999 | Signature verification internal error |
 | 400 | Parameter validation failed |
 | 401 | Signature verification failed |
 | 403 | Permission denied |
@@ -1148,7 +1148,7 @@ AgentCard registration must follow security specifications. The following are pr
 - Prompt injection attacks (keywords for ignoring instructions, jailbreaking, forced execution, etc.)
 - High-risk skill descriptions (keywords for privilege escalation, data theft, network attacks, etc.)
 
-For detailed specifications, please refer to [AgentCard Security Specification](../../design/AgentCard_Security_Specification.md).
+For detailed specifications, please refer to [AgentCard Security Specification](./Registry%20Center%20Security%20Guide.md).
 
 ### Appendix 4: LLM Configuration Guide
 
