@@ -45,9 +45,10 @@ import {
     Eye,
     XCircle,
     Archive,
+    History,
 } from 'lucide-react'
 import { getAgentCardsManage, getAgentsHealth, publishAgentCard } from '@/service/api.js'
-import ReviewWorkflow from './ReviewWorkflow.jsx'
+import ReviewTrailModal from './ReviewTrailModal.jsx'
 import { useHealthPolling } from '@/hooks/use_health_polling.js'
 import AgentCard from './agentcard_visualization/index.jsx'
 import CodeInspector from './code_inspector/index.jsx'
@@ -137,7 +138,7 @@ const StatsBar = ({ agents, isDark }) => {
 
 // ── Table row view ──
 
-const renderTableRow = (agent, setSelectedAgent, setViewMode, themeColor, layerBadge, t, healthOf, openReview, publishingKey) => {
+const renderTableRow = (agent, setSelectedAgent, setViewMode, themeColor, layerBadge, t, healthOf, openReview, openTrail, publishingKey) => {
     const health = healthOf(agent.id, agent.provider?.organization)
     return (
         <tr
@@ -241,6 +242,14 @@ const renderTableRow = (agent, setSelectedAgent, setViewMode, themeColor, layerB
                     >
                         <Eye size={12} />
                         {t('registry.action_view')}
+                    </button>
+                    <button
+                        onClick={() => openTrail(agent)}
+                        title={t('registry.review_view_trail')}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-black bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 transition-colors"
+                    >
+                        <History size={12} />
+                        {t('registry.review_trail_btn')}
                     </button>
                     {(() => {
                         const reviewStatus = agent.publishStatus || 'published'
@@ -380,6 +389,7 @@ const AgentRegistry = ({ isDark, api }) => {
     const [publishingKey, setPublishingKey] = useState(null)
     const [reviewTarget, setReviewTarget] = useState(null)
     const [reviewRemark, setReviewRemark] = useState('')
+    const [trailTarget, setTrailTarget] = useState(null)
 
     const openReview = useCallback((agent) => {
         setReviewRemark('')
@@ -504,17 +514,6 @@ const AgentRegistry = ({ isDark, api }) => {
                 {t('registry.view_registry')}
             </button>
             <button
-                onClick={() => setView('review')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-black uppercase tracking-wide transition-all ${
-                    view === 'review'
-                        ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-sm'
-                        : 'text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300'
-                }`}
-            >
-                <ShieldCheck size={13} />
-                {t('registry.view_review')}
-            </button>
-            <button
                 onClick={() => setView('heartbeat')}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-black uppercase tracking-wide transition-all ${
                     view === 'heartbeat'
@@ -635,20 +634,6 @@ const AgentRegistry = ({ isDark, api }) => {
                         <HeartbeatMonitor isDark={isDark} api={api} />
                     </div>
                 </>
-            ) : view === 'review' ? (
-                <>
-                    <div className="shrink-0 flex items-center justify-end mb-6 px-2">
-                        {viewToggle}
-                    </div>
-                    <div className="flex-1 min-h-0">
-                        <ReviewWorkflow
-                            agents={agents}
-                            statusCounts={statusCounts}
-                            api={api}
-                            t={t}
-                        />
-                    </div>
-                </>
             ) : (
                 <>
                     {/* 1. Stats cards on top */}
@@ -760,7 +745,7 @@ const AgentRegistry = ({ isDark, api }) => {
                                                 ? Object.values(vendorGroups).flat()
                                                 : filteredAgents
                                             ).map((agent) =>
-                                                renderTableRow(agent, setSelectedAgent, setViewMode, themeColor, layerBadge, t, healthOf, openReview, publishingKey),
+                                                renderTableRow(agent, setSelectedAgent, setViewMode, themeColor, layerBadge, t, healthOf, openReview, setTrailTarget, publishingKey),
                                             )}
                                             {(activeTab === 'vendor'
                                                 ? Object.values(vendorGroups).flat()
@@ -946,6 +931,18 @@ const AgentRegistry = ({ isDark, api }) => {
                     document.body,
                 )}
             </AnimatePresence>
+
+            {/* Review trail dialog — query one card's position in the review
+                state machine (current status + transition history) */}
+            {trailTarget && createPortal(
+                <ReviewTrailModal
+                    agent={trailTarget}
+                    onClose={() => setTrailTarget(null)}
+                    t={t}
+                    api={api}
+                />,
+                document.body,
+            )}
 
             {/* Publish review dialog — requires a review remark (reason) */}
             {reviewTarget && createPortal(
