@@ -57,7 +57,14 @@ from agent_registry.config import (
 from contextlib import asynccontextmanager
 
 from agent_registry.core import RegistryCore, make_agent_key, DISCOVERABLE_STATUS
-from agent_registry.status import is_discoverable_status
+from agent_registry.status import (
+    is_discoverable_status,
+    normalize_status,
+    is_known_status,
+    PENDING_STATUS as STATUS_PENDING,
+    REJECTED_STATUS as STATUS_REJECTED,
+    DEPRECATED_STATUS as STATUS_DEPRECATED,
+)
 from agent_registry.errors import (
     AuthoritativeStoreUnavailable,
     RegistryUnavailableError,
@@ -150,6 +157,21 @@ def get_registry_signer() -> Optional[AgentCardSigner]:
                         sign_enabled=True
                     )
                     logger.info("Registry signer initialized successfully")
+                except FileNotFoundError as e:
+                    # Provisioning contract (see jwk_private_key_path in
+                    # server.conf): a missing material file is logged and the
+                    # signer is skipped, so the service still starts and cards
+                    # are issued unsigned. Deployments upgraded before signing
+                    # materials were provisioned rely on this instead of a
+                    # startup failure; a present-but-broken material set still
+                    # fails fast below.
+                    logger.warning(
+                        "Registry signing material missing ({}); signer skipped, "
+                        "AgentCards will be issued unsigned. Provision cert '{}' "
+                        "and key '{}' (password '{}') to enable signing.",
+                        e.filename, cert_path, private_key_path,
+                        password_path or 'unset')
+                    _registry_signer = AgentCardSigner(sign_enabled=False)
                 except Exception as e:
                     logger.error(f"Failed to initialize registry signer: {e}")
                     raise HTTPException(status_code=503, detail="Registry signing materials unavailable") from e
@@ -968,7 +990,7 @@ async def _process_register_cards(
                     logger.info(f"Registry signature added for agent: card={index}/{total_cards}, name={agent.name}")
 
                 approval_enabled = config.get('agent_approval_enabled', 'false')
-                initial_status = 'registered' if approval_enabled == 'true' else 'published'
+                initial_status = STATUS_PENDING if approval_enabled == 'true' else DISCOVERABLE_STATUS
 
                 result = await _perform_registration(
                     agent, client_ip, details, initial_status=initial_status,
@@ -1061,31 +1083,52 @@ async def list_agents_exact(
 )
 async def list_agents_manage(
         request: Request,
+        review_status: Optional[str] = Query(
+            None, alias="status",
+            description="Filter by review status (registered/published/rejected/deprecated)"),
         registry: RegistryCore = Depends(get_registry),
         _: Any = Depends(RateLimiter('query')),
 ):
     """
     Management view for the review workflow: returns ALL agent cards
-    (published AND registered/unpublished) with a `publishStatus` field
-    attached to every card ('published' or 'registered').
+    (published, registered/unpublished, rejected, deprecated) with a
+    `publishStatus` field attached to every card.
+
+    Optional `status` query parameter filters to one review state; the
+    response always carries `statusCounts` (per-state totals across the
+    whole registry) so the review queue can render badges without a second
+    call.
     """
     client_ip = request.client.host
-    logger.info(f"Manage list agents request: client={client_ip}")
+    logger.info(f"Manage list agents request: client={client_ip}, status={review_status}")
     authenticate_handle = HandlerRegistry.get_handler(InterfaceType.AUTHENTICATE)
     await authenticate_handle.handle(client_ip, request)
+
+    status_filter = None
+    if review_status is not None:
+        status_filter = normalize_status(review_status)
+        if not is_known_status(status_filter):
+            raise CustomHTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                f"Unknown review status '{review_status}'. Must be one of: "
+                "registered, published, rejected, deprecated")
 
     async with semaphore_guard(query_semaphore):
         query_handle = HandlerRegistry.get_handler(InterfaceType.QUERY)
         agents = await query_handle.handle(None, None)
 
         result = []
+        status_counts = {}
         for agent in agents:
-            status = registry.get_status(agent.name, agent.provider.organization) or 'published'
+            card_status = registry.get_status(agent.name, agent.provider.organization) or 'published'
+            status_counts[card_status] = status_counts.get(card_status, 0) + 1
+            if status_filter is not None and card_status != status_filter:
+                continue
             agent_dict = MessageToDict(agent)
-            agent_dict['publishStatus'] = status
+            agent_dict['publishStatus'] = card_status
             result.append(agent_dict)
-        logger.info(f"Manage list agents result: {len(result)} agents")
-        return {"agentCards": result}
+        logger.info(f"Manage list agents result: {len(result)} agents (filtered={status_filter is not None})")
+        return {"agentCards": result, "statusCounts": status_counts}
 
 
 @app.post(
@@ -1104,14 +1147,84 @@ async def publish_agent(
     Review/approve an agent: transition its status from 'registered'
     (unpublished) to 'published'. Requires a non-empty review remark
     (the reason for approving). Every action is recorded in the
-    operation audit log.
+    operation audit log and in the per-card status history.
+    """
+    return await _apply_review_transition(
+        request, name, organization, target_status='published',
+        action='publish_review', registry=registry)
+
+
+@app.post(
+    "/rest/v1/registry-center/agent-cards/{organization}/{name}/reject",
+    response_model=None,
+    summary="Reject an agent (requires review remark)",
+)
+async def reject_agent(
+        request: Request,
+        name: str = Path(..., description="Agent name"),
+        organization: str = Path(..., description="Agent organization"),
+        registry: RegistryCore = Depends(get_registry),
+        _: Any = Depends(RateLimiter('update')),
+):
+    """
+    Reject an agent: transition its status to 'rejected' with a mandatory
+    remark recording why. The card leaves every discovery surface (it was
+    already invisible while pending) but stays stored for audit, and the
+    publisher can read back the rejection reason via the review-status
+    endpoint. Re-submission replaces the card (PUT) and returns it to
+    pending review.
+    """
+    return await _apply_review_transition(
+        request, name, organization, target_status=STATUS_REJECTED,
+        action='reject_review', registry=registry)
+
+
+@app.post(
+    "/rest/v1/registry-center/agent-cards/{organization}/{name}/deprecate",
+    response_model=None,
+    summary="Deprecate an agent (requires review remark)",
+)
+async def deprecate_agent(
+        request: Request,
+        name: str = Path(..., description="Agent name"),
+        organization: str = Path(..., description="Agent organization"),
+        registry: RegistryCore = Depends(get_registry),
+        _: Any = Depends(RateLimiter('update')),
+):
+    """
+    Deprecate an agent: terminal transition available from any state
+    (decommissioned, superseded, known-broken, or policy removal). The card
+    is removed from every discovery surface and cannot leave the deprecated
+    state; it remains stored and queryable for audit via the review-status
+    endpoint.
+    """
+    return await _apply_review_transition(
+        request, name, organization, target_status=STATUS_DEPRECATED,
+        action='deprecate_review', registry=registry)
+
+
+async def _apply_review_transition(
+        request: Request,
+        name: str,
+        organization: str,
+        target_status: str,
+        action: str,
+        registry: RegistryCore,
+):
+    """Shared approve/reject/deprecate flow: mandatory remark, transition,
+    operation-log entry.
+
+    The remark is the recorded reason for the state change — every
+    approver-driven transition must carry one. Illegal transitions surface
+    as 409 (e.g. approving a rejected card, or any move touching a
+    deprecated card), missing cards as 404.
     """
     client_ip = request.client.host
-    logger.info(f"Publish agent request: name={name}, org={organization}, client={client_ip}")
+    logger.info(f"{action} request: name={name}, org={organization}, client={client_ip}")
     authenticate_handle = HandlerRegistry.get_handler(InterfaceType.AUTHENTICATE)
     await authenticate_handle.handle(client_ip, request)
 
-    # Review remark is mandatory — it is the recorded reason for publishing.
+    # Review remark is mandatory — it is the recorded reason for the change.
     try:
         body = await request.json()
     except Exception:
@@ -1126,19 +1239,65 @@ async def publish_agent(
         if status_before is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                 detail=f"Agent not found: {organization}/{name}")
-        ok = registry.update_status(name, organization, 'published')
+        try:
+            ok = registry.update_status(name, organization, target_status,
+                                        reason=remark, operator=client_ip)
+        except ValueError as exc:
+            raise CustomHTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
         if not ok:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                                 detail="Failed to update agent status")
-        _append_operation_log('publish_review', client_ip, {
+        _append_operation_log(action, client_ip, {
             'agent_name': name,
             'organization': organization,
             'from_status': status_before,
-            'to_status': 'published',
+            'to_status': target_status,
             'remark': remark,
         })
-        logger.info(f"Publish agent result: {organization}/{name} -> published")
-        return {"status": "success", "publishStatus": "published"}
+        logger.info(f"{action} result: {organization}/{name} -> {target_status}")
+        return {"status": "success", "publishStatus": target_status}
+
+
+@app.get(
+    "/rest/v1/registry-center/agent-cards/{organization}/{name}/review-status",
+    response_model=None,
+    summary="Review status and transition history of an agent",
+)
+async def get_review_status(
+        request: Request,
+        name: str = Path(..., description="Agent name"),
+        organization: str = Path(..., description="Agent organization"),
+        limit: int = Query(20, ge=1, le=100, description="Max history entries (newest first)"),
+        registry: RegistryCore = Depends(get_registry),
+        _: Any = Depends(RateLimiter('query')),
+):
+    """
+    Publisher-facing review progress: the card's current review status plus
+    its transition history (newest first) with the reason and timestamp of
+    every transition, so a registrant always knows which step the
+    registration is at and what to fix after a rejection.
+    """
+    client_ip = request.client.host
+    logger.info(f"Review status request: name={name}, org={organization}, client={client_ip}")
+    authenticate_handle = HandlerRegistry.get_handler(InterfaceType.AUTHENTICATE)
+    await authenticate_handle.handle(client_ip, request)
+    await _maybe_audit_read(OperationName.QUERY_AGENT,
+                            {"name": name, "organization": organization},
+                            client_ip, caller=_audit_caller(_caller_identity(request)))
+
+    async with semaphore_guard(query_semaphore):
+        current = registry.get_status(name, organization)
+        if current is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                detail=f"Agent not found: {organization}/{name}")
+        history = registry.get_status_history(name, organization, limit)
+        return {
+            "agent_name": name,
+            "organization": organization,
+            "status": current,
+            "last_transition": history[0] if history else None,
+            "history": history,
+        }
 
 
 @app.get(

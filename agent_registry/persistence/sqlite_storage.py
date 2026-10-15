@@ -67,6 +67,8 @@ class SQLiteStorage(SqlStorageBackend):
             cur.execute(SQLiteQueries.CREATE_INDEX_LAYER.value)
             cur.execute(SQLiteQueries.CREATE_TAG_TABLE.value)
             cur.execute(SQLiteQueries.CREATE_TAG_INDEX_NAME.value)
+            cur.execute(SQLiteQueries.CREATE_STATUS_HISTORY_TABLE.value)
+            cur.execute(SQLiteQueries.CREATE_STATUS_HISTORY_INDEX.value)
             conn.commit()
             logger.info("SQLite tables and indexes created/verified")
         finally:

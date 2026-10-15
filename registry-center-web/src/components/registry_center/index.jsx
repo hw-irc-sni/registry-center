@@ -43,8 +43,12 @@ import {
     ShieldCheck,
     Clock,
     Eye,
+    XCircle,
+    Archive,
+    History,
 } from 'lucide-react'
 import { getAgentCardsManage, getAgentsHealth, publishAgentCard } from '@/service/api.js'
+import ReviewTrailModal from './ReviewTrailModal.jsx'
 import { useHealthPolling } from '@/hooks/use_health_polling.js'
 import AgentCard from './agentcard_visualization/index.jsx'
 import CodeInspector from './code_inspector/index.jsx'
@@ -134,7 +138,7 @@ const StatsBar = ({ agents, isDark }) => {
 
 // ── Table row view ──
 
-const renderTableRow = (agent, setSelectedAgent, setViewMode, themeColor, layerBadge, t, healthOf, openReview, publishingKey) => {
+const renderTableRow = (agent, setSelectedAgent, setViewMode, themeColor, layerBadge, t, healthOf, openReview, openTrail, publishingKey) => {
     const health = healthOf(agent.id, agent.provider?.organization)
     return (
         <tr
@@ -193,17 +197,39 @@ const renderTableRow = (agent, setSelectedAgent, setViewMode, themeColor, layerB
                 {health && <StatusBadge status={health} pulse={health === 'suspect'} />}
             </td>
             <td className="px-4 py-3">
-                {agent.publishStatus === 'published' ? (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-900/30 dark:border-emerald-800 dark:text-emerald-400">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        {t('registry.status_published')}
-                    </span>
-                ) : (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-900/30 dark:border-amber-800 dark:text-amber-400">
-                        <Clock size={10} />
-                        {t('registry.status_unpublished')}
-                    </span>
-                )}
+                {(() => {
+                    const reviewStatus = agent.publishStatus || 'published'
+                    if (reviewStatus === 'published') {
+                        return (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-900/30 dark:border-emerald-800 dark:text-emerald-400">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                {t('registry.status_published')}
+                            </span>
+                        )
+                    }
+                    if (reviewStatus === 'rejected') {
+                        return (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border bg-red-50 border-red-200 text-red-700 dark:bg-red-900/30 dark:border-red-800 dark:text-red-400">
+                                <XCircle size={10} />
+                                {t('registry.status_rejected')}
+                            </span>
+                        )
+                    }
+                    if (reviewStatus === 'deprecated') {
+                        return (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border bg-zinc-100 border-zinc-300 text-zinc-600 dark:bg-zinc-800/60 dark:border-zinc-700 dark:text-zinc-400">
+                                <Archive size={10} />
+                                {t('registry.status_deprecated')}
+                            </span>
+                        )
+                    }
+                    return (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-900/30 dark:border-amber-800 dark:text-amber-400">
+                            <Clock size={10} />
+                            {t('registry.status_registered')}
+                        </span>
+                    )
+                })()}
             </td>
             <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-center gap-2">
@@ -217,21 +243,51 @@ const renderTableRow = (agent, setSelectedAgent, setViewMode, themeColor, layerB
                         <Eye size={12} />
                         {t('registry.action_view')}
                     </button>
-                    {agent.publishStatus === 'published' ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-zinc-300 dark:text-zinc-600 uppercase">
-                            <CheckCircle2 size={12} />
-                            {t('registry.action_approved')}
-                        </span>
-                    ) : (
-                        <button
-                            disabled={publishingKey === agent.id}
-                            onClick={() => openReview(agent)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-wait text-white shadow-sm transition-colors"
-                        >
-                            <ShieldCheck size={12} />
-                            {publishingKey === agent.id ? t('registry.action_publishing') : t('registry.action_publish')}
-                        </button>
-                    )}
+                    <button
+                        onClick={() => openTrail(agent)}
+                        title={t('registry.review_view_trail')}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-black bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 transition-colors"
+                    >
+                        <History size={12} />
+                        {t('registry.review_trail_btn')}
+                    </button>
+                    {(() => {
+                        const reviewStatus = agent.publishStatus || 'published'
+                        if (reviewStatus === 'published') {
+                            return (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-zinc-300 dark:text-zinc-600 uppercase">
+                                    <CheckCircle2 size={12} />
+                                    {t('registry.action_approved')}
+                                </span>
+                            )
+                        }
+                        if (reviewStatus === 'rejected') {
+                            return (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-400 dark:text-red-500/70 uppercase">
+                                    <XCircle size={12} />
+                                    {t('registry.status_rejected')}
+                                </span>
+                            )
+                        }
+                        if (reviewStatus === 'deprecated') {
+                            return (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-zinc-400 dark:text-zinc-600 uppercase">
+                                    <Archive size={12} />
+                                    {t('registry.status_deprecated')}
+                                </span>
+                            )
+                        }
+                        return (
+                            <button
+                                disabled={publishingKey === agent.id}
+                                onClick={() => openReview(agent)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-wait text-white shadow-sm transition-colors"
+                            >
+                                <ShieldCheck size={12} />
+                                {publishingKey === agent.id ? t('registry.action_publishing') : t('registry.action_publish')}
+                            </button>
+                        )
+                    })()}
                 </div>
             </td>
         </tr>
@@ -242,6 +298,7 @@ const AgentRegistry = ({ isDark, api }) => {
     const { t } = useTranslation()
     const [searchTerm, setSearchTerm] = useState('')
     const [agents, setAgents] = useState([])
+    const [statusCounts, setStatusCounts] = useState({})
     const [loading, setLoading] = useState(true)
     const [activeTab, setActiveTab] = useState('all')
     const [selectedAgent, setSelectedAgent] = useState(null)
@@ -264,6 +321,7 @@ const AgentRegistry = ({ isDark, api }) => {
             // mode omits it and uses the local service instance.
             const response = await getAgentCardsManage(api)
             const rawList = response?.agentCards || []
+            setStatusCounts(response?.statusCounts || {})
             const enhancedData = rawList.map((val) => {
                 const key = val.name
                 const syncedRaw = { ...val, provider: val.provider }
@@ -331,6 +389,7 @@ const AgentRegistry = ({ isDark, api }) => {
     const [publishingKey, setPublishingKey] = useState(null)
     const [reviewTarget, setReviewTarget] = useState(null)
     const [reviewRemark, setReviewRemark] = useState('')
+    const [trailTarget, setTrailTarget] = useState(null)
 
     const openReview = useCallback((agent) => {
         setReviewRemark('')
@@ -686,7 +745,7 @@ const AgentRegistry = ({ isDark, api }) => {
                                                 ? Object.values(vendorGroups).flat()
                                                 : filteredAgents
                                             ).map((agent) =>
-                                                renderTableRow(agent, setSelectedAgent, setViewMode, themeColor, layerBadge, t, healthOf, openReview, publishingKey),
+                                                renderTableRow(agent, setSelectedAgent, setViewMode, themeColor, layerBadge, t, healthOf, openReview, setTrailTarget, publishingKey),
                                             )}
                                             {(activeTab === 'vendor'
                                                 ? Object.values(vendorGroups).flat()
@@ -872,6 +931,18 @@ const AgentRegistry = ({ isDark, api }) => {
                     document.body,
                 )}
             </AnimatePresence>
+
+            {/* Review trail dialog — query one card's position in the review
+                state machine (current status + transition history) */}
+            {trailTarget && createPortal(
+                <ReviewTrailModal
+                    agent={trailTarget}
+                    onClose={() => setTrailTarget(null)}
+                    t={t}
+                    api={api}
+                />,
+                document.body,
+            )}
 
             {/* Publish review dialog — requires a review remark (reason) */}
             {reviewTarget && createPortal(

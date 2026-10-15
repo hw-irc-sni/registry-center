@@ -28,6 +28,7 @@ from .blacklist_config import (
     DANGEROUS_SKILL_BLACKLIST_ALL,
     MASTER_BLACKLIST_ALL
 )
+from agent_registry.status import is_known_status
 
 _NAME_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+(?:\s+[a-zA-Z0-9_-]+)*$')
 
@@ -223,7 +224,7 @@ def validate_agent_card(agent: AgentCard):
 
 def validate_status(value: str):
     """Validate status field value (for agentregistry.json)"""
-    if value not in ['registered', 'published']:
+    if not is_known_status(value):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail='Agent status must be either "registered" or "published"')
+            detail='Agent status must be one of "registered", "published", "rejected", "deprecated"')

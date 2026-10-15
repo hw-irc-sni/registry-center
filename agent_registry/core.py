@@ -67,7 +67,12 @@ def make_agent_id(name: str, organization: str) -> str:
 #: Defined in agent_registry.status and re-exported here for existing callers.
 DISCOVERABLE_STATUS = status_policy.DISCOVERABLE_STATUS
 PENDING_STATUS = status_policy.PENDING_STATUS
+REJECTED_STATUS = status_policy.REJECTED_STATUS
+DEPRECATED_STATUS = status_policy.DEPRECATED_STATUS
 is_discoverable_status = status_policy.is_discoverable_status
+normalize_status = status_policy.normalize_status
+can_transition = status_policy.can_transition
+is_terminal_status = status_policy.is_terminal_status
 
 
 class RegistryCore:
@@ -432,7 +437,8 @@ class RegistryCore:
                     )
                 return result
             with self._atomic_write():
-                visible = is_discoverable_status(self._stored_status(name, organization))
+                previous_status = self._stored_status(name, organization)
+                visible = is_discoverable_status(previous_status)
                 if layer is LAYER_UNSET:
                     result = self.storage.update(
                         name, organization, agent_data, owner=owner
@@ -441,6 +447,15 @@ class RegistryCore:
                     result = self.storage.update(
                         name, organization, agent_data, owner=owner, layer=layer
                     )
+                if result and normalize_status(previous_status) == REJECTED_STATUS:
+                    # Resubmission (Requirement 30): replacing a rejected card
+                    # is the owner's appeal path — the record returns to pending
+                    # review and stays invisible until approved again.
+                    self.storage.update_status(name, organization, PENDING_STATUS)
+                    self.storage.append_status_history(
+                        name, organization, REJECTED_STATUS, PENDING_STATUS,
+                        reason='resubmitted', operator=owner or '')
+                    visible = False
                 logger.info(f"Updated agent: {name}({organization}, owner={owner})")
                 if result:
                     self._publish_discoverability_event(
@@ -784,7 +799,8 @@ class RegistryCore:
 
     def _publish_event(self, event_type: EventType, name: str, organization: str,
                        card_data: Optional[Dict[str, Any]] = None,
-                       layer: Optional[str] = None) -> None:
+                       layer: Optional[str] = None,
+                       extra_data: Optional[Dict[str, Any]] = None) -> None:
         """Publish a registry change event.
 
         Outside a unit of work, event failures are logged and swallowed so that
@@ -803,6 +819,8 @@ class RegistryCore:
                 data["agent_card"] = card_data
             if layer is not None:
                 data["layer"] = layer
+            if extra_data:
+                data.update(extra_data)
             bus = get_event_bus()
             if self._deferred_events is not None:
                 # Inside a unit of work: persist now, notify only after commit.
@@ -925,42 +943,94 @@ class RegistryCore:
         self._require_authoritative_store("reading agent timestamps")
         return self.storage.get_updated_at(name, organization) if self.storage else ''
 
-    def update_status(self, name: str, organization: str, new_status: str) -> bool:
-        """Update agent status.
+    def update_status(self, name: str, organization: str, new_status: str,
+                      reason: str = '', operator: str = '') -> bool:
+        """Update agent status through the review state machine.
+
+        Stored values are the legacy lowercase strings; aliases
+        (pending_review / approved) are normalized on entry and unknown values
+        raise ValueError. The transition matrix (agent_registry.status) rejects
+        illegal moves — notably anything leaving 'deprecated', which is
+        terminal — so an invalid request fails loudly instead of silently
+        flipping governance state.
+
+        Every applied transition is recorded in the per-card status history
+        (reason + operator + timestamp) so a publisher can always answer
+        "which step is my registration at, and why".
 
         The event announces the *visibility* transition, so the change feed and
         webhook subscribers never learn about pending cards and do learn when a
         card becomes (or stops being) discoverable:
 
-        * pending -> published  : AGENT_REGISTERED with the full card
-        * published -> pending  : AGENT_DEREGISTERED (the card left discovery)
-        * no visibility change  : AGENT_UPDATED with the current card
+        * pending -> published   : AGENT_REGISTERED with the full card
+        * published -> pending   : AGENT_DEREGISTERED (the card left discovery)
+        * no visibility change   : AGENT_UPDATED with the current card
+        * -> rejected/deprecated : AGENT_REVIEW_REJECTED / AGENT_REVIEW_DEPRECATED
+          carrying only the card identity and the approver's reason (never a
+          card payload), so subscribers drop caches without leaking content.
         """
-        if new_status not in ('registered', 'published'):
-            raise ValueError(f"Invalid status '{new_status}'. Must be 'registered' or 'published'.")
-        self._require_authoritative_store("approving or unapproving a card")
+        normalized = normalize_status(new_status)
+        if not status_policy.is_known_status(normalized):
+            raise ValueError(f"Invalid status '{new_status}'. Must be one of "
+                             f"{', '.join(status_policy.KNOWN_STATUSES)}.")
+        self._require_authoritative_store("changing a card's review status")
         with self._lock:
             if not self.storage:
                 return False
             with self._atomic_write():
                 previous_status = self._stored_status(name, organization)
-                result = self.storage.update_status(name, organization, new_status)
-                if result:
+                if previous_status is None:
+                    return False
+                if not can_transition(previous_status, normalized):
+                    allowed = status_policy.REVIEW_TRANSITIONS.get(
+                        normalize_status(previous_status), frozenset())
+                    raise ValueError(
+                        f"Invalid status transition '{previous_status}' -> '{normalized}'. "
+                        f"Allowed targets: {sorted(allowed)}")
+                result = self.storage.update_status(name, organization, normalized)
+                if result and normalized != previous_status:
+                    self.storage.append_status_history(
+                        name, organization, previous_status, normalized,
+                        reason=reason, operator=operator)
+                if result and normalized != previous_status:
                     record = self.storage.find_by_key(name, organization)
                     card_data = MessageToDict(record.agent_card, preserving_proto_field_name=True) if record else None
                     layer = record.layer if record else None
-                    was_visible = is_discoverable_status(previous_status)
-                    is_visible = is_discoverable_status(new_status)
-                    if is_visible and not was_visible:
-                        self._publish_event(EventType.AGENT_REGISTERED, name, organization,
-                                            card_data=card_data, layer=layer)
-                    elif was_visible and not is_visible:
-                        self._publish_event(EventType.AGENT_DEREGISTERED, name, organization,
-                                            layer=layer)
-                    elif is_visible:
-                        self._publish_event(EventType.AGENT_UPDATED, name, organization,
-                                            card_data=card_data, layer=layer)
+                    if normalized == REJECTED_STATUS:
+                        self._publish_event(
+                            EventType.AGENT_REVIEW_REJECTED, name, organization,
+                            extra_data={'reason': reason or '', 'operator': operator or '',
+                                        'from_status': previous_status, 'to_status': normalized})
+                    elif normalized == DEPRECATED_STATUS:
+                        self._publish_event(
+                            EventType.AGENT_REVIEW_DEPRECATED, name, organization,
+                            extra_data={'reason': reason or '', 'operator': operator or '',
+                                        'from_status': previous_status, 'to_status': normalized})
+                    else:
+                        was_visible = is_discoverable_status(previous_status)
+                        is_visible = is_discoverable_status(normalized)
+                        if is_visible and not was_visible:
+                            self._publish_event(EventType.AGENT_REGISTERED, name, organization,
+                                                card_data=card_data, layer=layer)
+                        elif was_visible and not is_visible:
+                            self._publish_event(EventType.AGENT_DEREGISTERED, name, organization,
+                                                layer=layer)
+                        elif is_visible:
+                            self._publish_event(EventType.AGENT_UPDATED, name, organization,
+                                                card_data=card_data, layer=layer)
             return result
+
+    def get_status_history(self, name: str, organization: str,
+                           limit: int = 20) -> List[Dict[str, Any]]:
+        """Status transitions of a card, newest first (Requirement 30).
+
+        Backends without history support (custom storage) return an empty
+        list; the record's current status remains the authoritative answer.
+        """
+        self._require_authoritative_store("reading a card's status history")
+        if not self.storage:
+            return []
+        return self.storage.get_status_history(name, organization, limit)
 
     def get_agents_by_status(self, status: str) -> List[AgentCard]:
         """Get agents by status."""

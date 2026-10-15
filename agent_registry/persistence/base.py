@@ -103,6 +103,25 @@ class StorageBackend(ABC):
         """Update agent status."""
         pass
 
+    # Review state machine history (Requirement 30). Default implementations
+    # keep custom storage backends working without the history table: the
+    # registry core treats missing history as "no recorded transition".
+    def append_status_history(self, name: str, organization: str,
+                              from_status: Optional[str], to_status: str,
+                              reason: str = '', operator: str = '',
+                              created_at: str = '') -> bool:
+        """Record one status transition for audit and publisher queries."""
+        return False
+
+    def get_status_history(self, name: str, organization: str,
+                           limit: int = 20) -> List[Dict[str, Any]]:
+        """Return the card's status transitions, newest first."""
+        return []
+
+    def delete_status_history(self, name: str, organization: str) -> None:
+        """Drop history rows when the card itself is deleted."""
+        return None
+
     @abstractmethod
     def delete(self, name: str, organization: str, owner: Optional[str] = None) -> bool:
         pass

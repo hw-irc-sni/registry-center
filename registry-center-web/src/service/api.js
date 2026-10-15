@@ -103,6 +103,15 @@ export async function publishAgentCard(organization, name, remark, injectedApi) 
     return client.post(`${REGISTRY_BASE()}/agent-cards/${encodedOrg}/${encodedName}/publish`, { remark })
 }
 
+// Review state machine trail: current status + newest-first transition
+// history (from/to status, reason, operator, timestamp) per agent card.
+export async function getAgentReviewStatus(organization, name, injectedApi) {
+    const encodedOrg = encodeURIComponent(organization)
+    const encodedName = encodeURIComponent(name)
+    const client = injectedApi || api
+    return client.get(`${REGISTRY_BASE()}/agent-cards/${encodedOrg}/${encodedName}/review-status`)
+}
+
 // Operation audit log (review/publish actions)
 export async function getOperationLogs(limit, injectedApi) {
     const client = injectedApi || api
