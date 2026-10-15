@@ -47,6 +47,7 @@ class FileStorage(StorageBackend):
         self._created_at_map: Dict[tuple, str] = {}
         self._updated_at_map: Dict[tuple, str] = {}
         self._layer_map: Dict[tuple, str] = {}
+        self._status_history_map: Dict[tuple, List[Dict[str, Any]]] = {}
         self._tag_list: Dict[str, Tag] = {}
         self._load()
 
@@ -166,11 +167,45 @@ class FileStorage(StorageBackend):
         if key not in self._agents:
             logger.warning(f"Agent not found: {name} ({organization})")
             return False
-        
+
         self._status_map[key] = new_status
         self._save_registry()
         logger.info(f"Agent status updated: {name} -> {new_status}")
         return True
+
+    # ---- review state machine history (Requirement 30) ----
+
+    #: Per-card transition history cap: the query API reads the latest
+    #: transitions, and unbounded growth would bloat the metadata file.
+    MAX_STATUS_HISTORY = 50
+
+    def append_status_history(self, name: str, organization: str,
+                              from_status: Optional[str], to_status: str,
+                              reason: str = '', operator: str = '',
+                              created_at: str = '') -> bool:
+        key = (name.strip(), organization.strip())
+        if key not in self._agents:
+            return False
+        history = self._status_history_map.setdefault(key, [])
+        history.append({
+            'from_status': from_status,
+            'to_status': to_status,
+            'reason': reason or '',
+            'operator': operator or '',
+            'at': created_at or datetime.now(timezone.utc).isoformat(),
+        })
+        del history[:-self.MAX_STATUS_HISTORY]
+        self._save_registry()
+        return True
+
+    def get_status_history(self, name: str, organization: str,
+                           limit: int = 20) -> List[Dict[str, Any]]:
+        key = (name.strip(), organization.strip())
+        history = self._status_history_map.get(key, [])
+        return list(reversed(history[-int(limit):])) if limit > 0 else []
+
+    def delete_status_history(self, name: str, organization: str) -> None:
+        self._status_history_map.pop((name.strip(), organization.strip()), None)
 
     def update(self, name: str, organization: str, agent_data: Dict[str, Any],
                owner: Optional[str] = None, layer=LAYER_UNSET) -> bool:
@@ -222,6 +257,7 @@ class FileStorage(StorageBackend):
             del self._updated_at_map[key]
         if key in self._layer_map:
             del self._layer_map[key]
+        self._status_history_map.pop(key, None)
         self._save()
         logger.info(f"Deregistered agent: {name}({organization}, owner={owner})")
         return True
@@ -307,7 +343,8 @@ class FileStorage(StorageBackend):
                 "tags": self._agent_tags_map.get(key, []),
                 "layer": self._layer_map.get(key, UNKNOWN_LAYER),
                 "created_at": self._created_at_map.get(key, ''),
-                "updated_at": self._updated_at_map.get(key, '')
+                "updated_at": self._updated_at_map.get(key, ''),
+                "status_history": self._status_history_map.get(key, []),
             })
 
         json_str = json.dumps(registry_data, ensure_ascii=False, indent=2)
@@ -391,6 +428,8 @@ class FileStorage(StorageBackend):
                         self._layer_map[key] = UNKNOWN_LAYER
                     self._created_at_map[key] = item.get('created_at', '')
                     self._updated_at_map[key] = item.get('updated_at', '')
+                    raw_history = item.get('status_history', [])
+                    self._status_history_map[key] = raw_history if isinstance(raw_history, list) else []
                 except Exception as e:
                     logger.error(f"Failed to load status from JSON: {e}, data: {item}")
             logger.info(f"Loaded {len(self._status_map)} status mappings from {self.metadata_file}")

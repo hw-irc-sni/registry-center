@@ -17,6 +17,12 @@ class EventType(str, Enum):
     AGENT_UPDATED = "AGENT_UPDATED"
     AGENT_DEREGISTERED = "AGENT_DEREGISTERED"
     AGENT_HEALTH_CHANGED = "AGENT_HEALTH_CHANGED"
+    #: Review state machine (Requirement 30): a card failed review with
+    #: recorded feedback, or was withdrawn from discovery permanently. Both
+    #: carry only the card identity and the approver's reason — never a card
+    #: payload — so announcing them leaks nothing an unapproved card owns.
+    AGENT_REVIEW_REJECTED = "AGENT_REVIEW_REJECTED"
+    AGENT_REVIEW_DEPRECATED = "AGENT_REVIEW_DEPRECATED"
     SYNC_REQUIRED = "SYNC_REQUIRED"
 
 

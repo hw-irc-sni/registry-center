@@ -43,6 +43,8 @@ import {
     ShieldCheck,
     Clock,
     Eye,
+    XCircle,
+    Archive,
 } from 'lucide-react'
 import { getAgentCardsManage, getAgentsHealth, publishAgentCard } from '@/service/api.js'
 import { useHealthPolling } from '@/hooks/use_health_polling.js'
@@ -193,17 +195,39 @@ const renderTableRow = (agent, setSelectedAgent, setViewMode, themeColor, layerB
                 {health && <StatusBadge status={health} pulse={health === 'suspect'} />}
             </td>
             <td className="px-4 py-3">
-                {agent.publishStatus === 'published' ? (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-900/30 dark:border-emerald-800 dark:text-emerald-400">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        {t('registry.status_published')}
-                    </span>
-                ) : (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-900/30 dark:border-amber-800 dark:text-amber-400">
-                        <Clock size={10} />
-                        {t('registry.status_unpublished')}
-                    </span>
-                )}
+                {(() => {
+                    const reviewStatus = agent.publishStatus || 'published'
+                    if (reviewStatus === 'published') {
+                        return (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-900/30 dark:border-emerald-800 dark:text-emerald-400">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                {t('registry.status_published')}
+                            </span>
+                        )
+                    }
+                    if (reviewStatus === 'rejected') {
+                        return (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border bg-red-50 border-red-200 text-red-700 dark:bg-red-900/30 dark:border-red-800 dark:text-red-400">
+                                <XCircle size={10} />
+                                {t('registry.status_rejected')}
+                            </span>
+                        )
+                    }
+                    if (reviewStatus === 'deprecated') {
+                        return (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border bg-zinc-100 border-zinc-300 text-zinc-600 dark:bg-zinc-800/60 dark:border-zinc-700 dark:text-zinc-400">
+                                <Archive size={10} />
+                                {t('registry.status_deprecated')}
+                            </span>
+                        )
+                    }
+                    return (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-900/30 dark:border-amber-800 dark:text-amber-400">
+                            <Clock size={10} />
+                            {t('registry.status_unpublished')}
+                        </span>
+                    )
+                })()}
             </td>
             <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-center gap-2">
@@ -217,21 +241,43 @@ const renderTableRow = (agent, setSelectedAgent, setViewMode, themeColor, layerB
                         <Eye size={12} />
                         {t('registry.action_view')}
                     </button>
-                    {agent.publishStatus === 'published' ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-zinc-300 dark:text-zinc-600 uppercase">
-                            <CheckCircle2 size={12} />
-                            {t('registry.action_approved')}
-                        </span>
-                    ) : (
-                        <button
-                            disabled={publishingKey === agent.id}
-                            onClick={() => openReview(agent)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-wait text-white shadow-sm transition-colors"
-                        >
-                            <ShieldCheck size={12} />
-                            {publishingKey === agent.id ? t('registry.action_publishing') : t('registry.action_publish')}
-                        </button>
-                    )}
+                    {(() => {
+                        const reviewStatus = agent.publishStatus || 'published'
+                        if (reviewStatus === 'published') {
+                            return (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-zinc-300 dark:text-zinc-600 uppercase">
+                                    <CheckCircle2 size={12} />
+                                    {t('registry.action_approved')}
+                                </span>
+                            )
+                        }
+                        if (reviewStatus === 'rejected') {
+                            return (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-400 dark:text-red-500/70 uppercase">
+                                    <XCircle size={12} />
+                                    {t('registry.status_rejected')}
+                                </span>
+                            )
+                        }
+                        if (reviewStatus === 'deprecated') {
+                            return (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-zinc-400 dark:text-zinc-600 uppercase">
+                                    <Archive size={12} />
+                                    {t('registry.status_deprecated')}
+                                </span>
+                            )
+                        }
+                        return (
+                            <button
+                                disabled={publishingKey === agent.id}
+                                onClick={() => openReview(agent)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-black bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-wait text-white shadow-sm transition-colors"
+                            >
+                                <ShieldCheck size={12} />
+                                {publishingKey === agent.id ? t('registry.action_publishing') : t('registry.action_publish')}
+                            </button>
+                        )
+                    })()}
                 </div>
             </td>
         </tr>

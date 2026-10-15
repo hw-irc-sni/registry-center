@@ -255,6 +255,45 @@ class PostgreSQLQueries(str, Enum):
         ORDER BY created_at DESC
     """
 
+    # Review state machine history (Requirement 30): one row per status
+    # transition, kept for the publisher-facing "where is my registration"
+    # query and for audit. Additive table — never ALTERs agent_card.
+    CREATE_STATUS_HISTORY_TABLE = """
+        CREATE TABLE IF NOT EXISTS agent_status_history (
+            id            SERIAL PRIMARY KEY,
+            name          VARCHAR(100) NOT NULL,
+            organization  VARCHAR(100) NOT NULL,
+            from_status   VARCHAR(20),
+            to_status     VARCHAR(20) NOT NULL,
+            reason        VARCHAR(1000) NOT NULL DEFAULT '',
+            operator      VARCHAR(100) NOT NULL DEFAULT '',
+            created_at    VARCHAR(64) NOT NULL DEFAULT ''
+        )
+    """
+
+    CREATE_STATUS_HISTORY_INDEX = """
+        CREATE INDEX IF NOT EXISTS idx_status_history_key
+        ON agent_status_history(name, organization)
+    """
+
+    INSERT_STATUS_HISTORY = """
+        INSERT INTO agent_status_history
+            (name, organization, from_status, to_status, reason, operator, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """
+
+    SELECT_STATUS_HISTORY = """
+        SELECT from_status, to_status, reason, operator, created_at
+        FROM agent_status_history
+        WHERE name = %s AND organization = %s
+        ORDER BY id DESC
+        LIMIT %s
+    """
+
+    DELETE_STATUS_HISTORY_BY_AGENT = """
+        DELETE FROM agent_status_history WHERE name = %s AND organization = %s
+    """
+
 
 class SQLiteQueries(str, Enum):
     """SQL queries for SQLite backend (placeholder: ?, JSON stored as TEXT)."""
@@ -430,6 +469,43 @@ class SQLiteQueries(str, Enum):
     LIST_TAGS = """
         SELECT tag_id, name, created_at, updated_at FROM tag
         ORDER BY created_at DESC
+    """
+
+    # Review state machine history (Requirement 30) — see PostgreSQLQueries.
+    CREATE_STATUS_HISTORY_TABLE = """
+        CREATE TABLE IF NOT EXISTS agent_status_history (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            name          TEXT NOT NULL,
+            organization  TEXT NOT NULL,
+            from_status   TEXT,
+            to_status     TEXT NOT NULL,
+            reason        TEXT NOT NULL DEFAULT '',
+            operator      TEXT NOT NULL DEFAULT '',
+            created_at    TEXT NOT NULL DEFAULT ''
+        )
+    """
+
+    CREATE_STATUS_HISTORY_INDEX = """
+        CREATE INDEX IF NOT EXISTS idx_status_history_key
+        ON agent_status_history(name, organization)
+    """
+
+    INSERT_STATUS_HISTORY = """
+        INSERT INTO agent_status_history
+            (name, organization, from_status, to_status, reason, operator, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """
+
+    SELECT_STATUS_HISTORY = """
+        SELECT from_status, to_status, reason, operator, created_at
+        FROM agent_status_history
+        WHERE name = ? AND organization = ?
+        ORDER BY id DESC
+        LIMIT ?
+    """
+
+    DELETE_STATUS_HISTORY_BY_AGENT = """
+        DELETE FROM agent_status_history WHERE name = ? AND organization = ?
     """
 
 
@@ -667,6 +743,43 @@ class GaussDBQueries(str, Enum):
         ORDER BY created_at DESC
     """
 
+    # Review state machine history (Requirement 30) — see PostgreSQLQueries.
+    CREATE_STATUS_HISTORY_TABLE = """
+        CREATE TABLE IF NOT EXISTS agent_status_history (
+            id            SERIAL PRIMARY KEY,
+            name          VARCHAR(100) NOT NULL,
+            organization  VARCHAR(100) NOT NULL,
+            from_status   VARCHAR(20),
+            to_status     VARCHAR(20) NOT NULL,
+            reason        VARCHAR(1000) NOT NULL DEFAULT '',
+            operator      VARCHAR(100) NOT NULL DEFAULT '',
+            created_at    VARCHAR(64) NOT NULL DEFAULT ''
+        )
+    """
+
+    CREATE_STATUS_HISTORY_INDEX = """
+        CREATE INDEX IF NOT EXISTS idx_status_history_key
+        ON agent_status_history(name, organization)
+    """
+
+    INSERT_STATUS_HISTORY = """
+        INSERT INTO agent_status_history
+            (name, organization, from_status, to_status, reason, operator, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """
+
+    SELECT_STATUS_HISTORY = """
+        SELECT from_status, to_status, reason, operator, created_at
+        FROM agent_status_history
+        WHERE name = %s AND organization = %s
+        ORDER BY id DESC
+        LIMIT %s
+    """
+
+    DELETE_STATUS_HISTORY_BY_AGENT = """
+        DELETE FROM agent_status_history WHERE name = %s AND organization = %s
+    """
+
 
 class MySQLQueries(str, Enum):
     """SQL queries for MySQL backend (placeholder: %s, native JSON columns).
@@ -865,4 +978,39 @@ class MySQLQueries(str, Enum):
     LIST_TAGS = """
         SELECT tag_id, name, created_at, updated_at FROM tag
         ORDER BY created_at DESC
+    """
+
+    # Review state machine history (Requirement 30) — see PostgreSQLQueries.
+    # Timestamps stay VARCHAR like the tag table; ISO strings are passed in.
+    CREATE_STATUS_HISTORY_TABLE = """
+        CREATE TABLE IF NOT EXISTS agent_status_history (
+            id            BIGINT NOT NULL AUTO_INCREMENT,
+            name          VARCHAR(100) COLLATE utf8mb4_bin NOT NULL,
+            organization  VARCHAR(100) COLLATE utf8mb4_bin NOT NULL,
+            from_status   VARCHAR(20) COLLATE utf8mb4_bin,
+            to_status     VARCHAR(20) COLLATE utf8mb4_bin NOT NULL,
+            reason        VARCHAR(1000) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+            operator      VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+            created_at    VARCHAR(64) COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+            PRIMARY KEY (id),
+            KEY idx_status_history_key (name, organization)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    """
+
+    INSERT_STATUS_HISTORY = """
+        INSERT INTO agent_status_history
+            (name, organization, from_status, to_status, reason, operator, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """
+
+    SELECT_STATUS_HISTORY = """
+        SELECT from_status, to_status, reason, operator, created_at
+        FROM agent_status_history
+        WHERE name = %s AND organization = %s
+        ORDER BY id DESC
+        LIMIT %s
+    """
+
+    DELETE_STATUS_HISTORY_BY_AGENT = """
+        DELETE FROM agent_status_history WHERE name = %s AND organization = %s
     """

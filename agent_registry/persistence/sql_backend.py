@@ -534,6 +534,45 @@ class SqlStorageBackend(StorageBackend):
         )
         return affected > 0
 
+    # ---- review state machine history (Requirement 30) ----
+
+    def append_status_history(self, name: str, organization: str,
+                              from_status: Optional[str], to_status: str,
+                              reason: str = '', operator: str = '',
+                              created_at: str = '') -> bool:
+        """Record one status transition; runs inside the caller's transaction."""
+        ts = created_at or datetime.now(timezone.utc).isoformat()
+        self._execute_write(
+            self.queries.INSERT_STATUS_HISTORY.value,
+            (name, organization, from_status, to_status, reason or '', operator or '', ts)
+        )
+        return True
+
+    def get_status_history(self, name: str, organization: str,
+                           limit: int = 20) -> List[Dict[str, Any]]:
+        """Return the card's status transitions, newest first."""
+        rows = self._execute_read_all(
+            self.queries.SELECT_STATUS_HISTORY.value,
+            (name, organization, int(limit))
+        )
+        history = []
+        for row in rows:
+            history.append({
+                'from_status': row[0],
+                'to_status': row[1],
+                'reason': row[2] or '',
+                'operator': row[3] or '',
+                'at': self._parse_timestamp(row[4]) if row[4] else '',
+            })
+        return history
+
+    def delete_status_history(self, name: str, organization: str) -> None:
+        """Drop the card's history rows; called after a successful delete."""
+        self._execute_write(
+            self.queries.DELETE_STATUS_HISTORY_BY_AGENT.value,
+            (name, organization)
+        )
+
     def delete(self, name: str, organization: str,
                owner: Optional[str] = None) -> bool:
         if owner is not None:
@@ -553,6 +592,8 @@ class SqlStorageBackend(StorageBackend):
                     self.queries.DELETE_AGENT.value,
                     (name, organization)
                 )
+        if affected > 0:
+            self.delete_status_history(name, organization)
         logger.info(f"Deleted agent: {name} (org={organization}, owner={owner}), affected={affected}")
         return affected > 0
 

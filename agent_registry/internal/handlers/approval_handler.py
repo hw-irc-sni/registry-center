@@ -21,6 +21,9 @@ from loguru import logger
 
 from agent_registry.internal.handlers.base_handler import BaseUDSHandler
 from agent_registry.internal.protocols.response import InternalResponse
+from agent_registry.status import (
+    DISCOVERABLE_STATUS, REJECTED_STATUS, DEPRECATED_STATUS, can_transition, normalize_status,
+)
 from common.custom.custom_handle import HandlerRegistry
 from common.custom.interface_type import InterfaceType
 from common.log.audit_logger import LogLevel, OperationName, OperationResult, OperatorObject
@@ -31,7 +34,9 @@ class ApprovalHandler(BaseUDSHandler):
         agent_name = params.get('agent_name')
         organization = params.get('organization')
         user_name = params.get('user_name', 'admin')  # CLI操作默认为admin
-        
+        # Optional review remark: recorded as the reason for the approval.
+        remark = str(params.get('remark') or '').strip() or 'approved via CLI'
+
         details = {
             "agentName": agent_name,
             "organization": organization
@@ -89,7 +94,8 @@ class ApprovalHandler(BaseUDSHandler):
             ).model_dump()
         
         current_status = registry.get_status(agent_name, organization)
-        if current_status == 'published':
+        normalized = normalize_status(current_status)
+        if normalized == DISCOVERABLE_STATUS:
             asyncio.run(audit_handle.handle({
                 "operation_name": OperationName.APPROVE_AGENT,
                 "level": LogLevel.MINOR,
@@ -104,9 +110,45 @@ class ApprovalHandler(BaseUDSHandler):
                 error="Agent already published",
                 message=f"Agent '{agent_name}' is already in published status"
             ).model_dump()
-        
+        if normalized == DEPRECATED_STATUS:
+            # Terminal state (Requirement 30): a deprecated card cannot be
+            # revived; recovery equals registering it again as a new record.
+            asyncio.run(audit_handle.handle({
+                "operation_name": OperationName.APPROVE_AGENT,
+                "level": LogLevel.MINOR,
+                "result": OperationResult.FAILURE,
+                "object_name": OperatorObject.AGENT,
+                "details": details,
+                "client_ip": "internal",
+                "user_name": user_name
+            }))
+            return InternalResponse(
+                success=False,
+                error="Agent is deprecated",
+                message=f"Agent '{agent_name}' is deprecated (terminal state); "
+                        f"register it again to make it discoverable"
+            ).model_dump()
+        if not can_transition(current_status, DISCOVERABLE_STATUS):
+            asyncio.run(audit_handle.handle({
+                "operation_name": OperationName.APPROVE_AGENT,
+                "level": LogLevel.MINOR,
+                "result": OperationResult.FAILURE,
+                "object_name": OperatorObject.AGENT,
+                "details": details,
+                "client_ip": "internal",
+                "user_name": user_name
+            }))
+            return InternalResponse(
+                success=False,
+                error="Invalid review transition",
+                message=f"Agent '{agent_name}' is in '{current_status}' status; "
+                        f"a rejected card must be resubmitted (card update) before approval"
+            ).model_dump()
+
         try:
-            updated = registry.update_status(agent_name, organization, 'published')
+            updated = registry.update_status(
+                agent_name, organization, DISCOVERABLE_STATUS,
+                reason=remark, operator=user_name)
             if not updated:
                 asyncio.run(audit_handle.handle({
                     "operation_name": OperationName.APPROVE_AGENT,
@@ -134,14 +176,14 @@ class ApprovalHandler(BaseUDSHandler):
                 "user_name": user_name
             }))
             logger.info(f"Agent approved: {agent_name} ({organization})")
-            
+
             return InternalResponse(
                 success=True,
                 message="Agent approval successful",
                 data={
                     "agent_name": agent_name,
                     "organization": organization,
-                    "status": "published"
+                    "status": DISCOVERABLE_STATUS
                 }
             ).model_dump()
         except Exception as e:

@@ -479,7 +479,8 @@ class TestApprovalHandler:
         assert result["message"] == "Agent approval successful"
         assert result["data"] == {"agent_name": "a1", "organization": "org1",
                                   "status": "published"}
-        registry.update_status.assert_called_once_with("a1", "org1", "published")
+        registry.update_status.assert_called_once_with(
+            "a1", "org1", "published", reason="approved via CLI", operator="admin")
         assert audit_recorder.entries[0]["result"] == OperationResult.SUCCESS
 
     def test_user_name_defaults_to_admin_in_audit(self, handler, registry, audit_recorder):

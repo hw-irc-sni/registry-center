@@ -158,6 +158,8 @@ class MySQLStorage(SqlStorageBackend):
                 logger.info("Table 'agent_card' and indexes created/verified")
                 cur.execute(MySQLQueries.CREATE_TAG_TABLE.value)
                 logger.info("Table 'tag' and indexes created/verified")
+                cur.execute(MySQLQueries.CREATE_STATUS_HISTORY_TABLE.value)
+                logger.info("Table 'agent_status_history' created/verified")
         finally:
             conn.close()
 

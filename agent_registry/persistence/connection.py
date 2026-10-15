@@ -91,6 +91,10 @@ def ensure_pg_tables(conn_pool: pool.ThreadedConnectionPool, queries,
             cur.execute(queries.CREATE_TAG_TABLE.value)
             cur.execute(queries.CREATE_TAG_INDEX_NAME.value)
             logger.info("Table 'tag' and indexes created/verified")
+
+            cur.execute(queries.CREATE_STATUS_HISTORY_TABLE.value)
+            cur.execute(queries.CREATE_STATUS_HISTORY_INDEX.value)
+            logger.info("Table 'agent_status_history' and indexes created/verified")
     finally:
         # The connection is returned to a pool and may later participate in a
         # multi-statement unit of work.  Do not leak the bootstrap connection's
