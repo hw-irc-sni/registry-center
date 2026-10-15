@@ -34,13 +34,22 @@ const TRAIL_DOT = {
     deprecated: 'border-zinc-400 text-zinc-500 dark:text-zinc-400',
 }
 
+const STATUS_KEYS = Object.keys(STATE_META)
+
+// Localized status label: never show a raw i18n key when the locale misses
+// a status; unknown statuses fall back to their stored value.
+function statusLabel(t, status) {
+    if (!status) return '—'
+    return STATUS_KEYS.includes(status) ? t(`registry.status_${status}`) : status
+}
+
 export function StatusPill({ status, t }) {
     const meta = STATE_META[status] || STATE_META.registered
     const Icon = meta.icon
     return (
         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border ${meta.pill}`}>
             <Icon size={10} />
-            {t(`registry.status_${status}`)}
+            {statusLabel(t, status)}
         </span>
     )
 }
@@ -96,10 +105,10 @@ function TrailBody({ organization, name, api, t }) {
                                 </span>
                                 <div className="flex flex-wrap items-center gap-2">
                                     <span className="text-xs font-black text-zinc-900 dark:text-white uppercase">
-                                        {t(`registry.status_${item.to_status}`)}
+                                        {statusLabel(t, item.to_status)}
                                     </span>
                                     <span className="text-[10px] font-bold text-zinc-400">
-                                        {item.from_status || '—'} → {item.to_status}
+                                        {statusLabel(t, item.from_status)} → {statusLabel(t, item.to_status)}
                                     </span>
                                     <span className="text-[10px] font-bold text-zinc-400">
                                         {String(item.at || '').replace('T', ' ').slice(0, 19)}
