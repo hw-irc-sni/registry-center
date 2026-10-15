@@ -157,6 +157,21 @@ def get_registry_signer() -> Optional[AgentCardSigner]:
                         sign_enabled=True
                     )
                     logger.info("Registry signer initialized successfully")
+                except FileNotFoundError as e:
+                    # Provisioning contract (see jwk_private_key_path in
+                    # server.conf): a missing material file is logged and the
+                    # signer is skipped, so the service still starts and cards
+                    # are issued unsigned. Deployments upgraded before signing
+                    # materials were provisioned rely on this instead of a
+                    # startup failure; a present-but-broken material set still
+                    # fails fast below.
+                    logger.warning(
+                        "Registry signing material missing ({}); signer skipped, "
+                        "AgentCards will be issued unsigned. Provision cert '{}' "
+                        "and key '{}' (password '{}') to enable signing.",
+                        e.filename, cert_path, private_key_path,
+                        password_path or 'unset')
+                    _registry_signer = AgentCardSigner(sign_enabled=False)
                 except Exception as e:
                     logger.error(f"Failed to initialize registry signer: {e}")
                     raise HTTPException(status_code=503, detail="Registry signing materials unavailable") from e
