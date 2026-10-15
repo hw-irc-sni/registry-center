@@ -47,6 +47,7 @@ import {
     Archive,
 } from 'lucide-react'
 import { getAgentCardsManage, getAgentsHealth, publishAgentCard } from '@/service/api.js'
+import ReviewWorkflow from './ReviewWorkflow.jsx'
 import { useHealthPolling } from '@/hooks/use_health_polling.js'
 import AgentCard from './agentcard_visualization/index.jsx'
 import CodeInspector from './code_inspector/index.jsx'
@@ -288,6 +289,7 @@ const AgentRegistry = ({ isDark, api }) => {
     const { t } = useTranslation()
     const [searchTerm, setSearchTerm] = useState('')
     const [agents, setAgents] = useState([])
+    const [statusCounts, setStatusCounts] = useState({})
     const [loading, setLoading] = useState(true)
     const [activeTab, setActiveTab] = useState('all')
     const [selectedAgent, setSelectedAgent] = useState(null)
@@ -310,6 +312,7 @@ const AgentRegistry = ({ isDark, api }) => {
             // mode omits it and uses the local service instance.
             const response = await getAgentCardsManage(api)
             const rawList = response?.agentCards || []
+            setStatusCounts(response?.statusCounts || {})
             const enhancedData = rawList.map((val) => {
                 const key = val.name
                 const syncedRaw = { ...val, provider: val.provider }
@@ -501,6 +504,17 @@ const AgentRegistry = ({ isDark, api }) => {
                 {t('registry.view_registry')}
             </button>
             <button
+                onClick={() => setView('review')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-black uppercase tracking-wide transition-all ${
+                    view === 'review'
+                        ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white shadow-sm'
+                        : 'text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300'
+                }`}
+            >
+                <ShieldCheck size={13} />
+                {t('registry.view_review')}
+            </button>
+            <button
                 onClick={() => setView('heartbeat')}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-black uppercase tracking-wide transition-all ${
                     view === 'heartbeat'
@@ -619,6 +633,20 @@ const AgentRegistry = ({ isDark, api }) => {
                     </div>
                     <div className="flex-1 min-h-0">
                         <HeartbeatMonitor isDark={isDark} api={api} />
+                    </div>
+                </>
+            ) : view === 'review' ? (
+                <>
+                    <div className="shrink-0 flex items-center justify-end mb-6 px-2">
+                        {viewToggle}
+                    </div>
+                    <div className="flex-1 min-h-0">
+                        <ReviewWorkflow
+                            agents={agents}
+                            statusCounts={statusCounts}
+                            api={api}
+                            t={t}
+                        />
                     </div>
                 </>
             ) : (
