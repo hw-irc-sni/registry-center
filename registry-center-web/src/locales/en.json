@@ -55,6 +55,7 @@
     "col_actions": "Actions",
     "status_published": "Published",
     "status_unpublished": "Unpublished",
+    "status_registered": "Pending Review",
     "status_rejected": "Rejected",
     "status_deprecated": "Deprecated",
     "action_publish": "Publish Review",

@@ -55,6 +55,7 @@
     "col_actions": "操作",
     "status_published": "发布",
     "status_unpublished": "未发布",
+    "status_registered": "待审核",
     "status_rejected": "已拒绝",
     "status_deprecated": "已弃用",
     "action_publish": "发布审核",

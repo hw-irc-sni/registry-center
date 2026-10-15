@@ -226,7 +226,7 @@ const renderTableRow = (agent, setSelectedAgent, setViewMode, themeColor, layerB
                     return (
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-900/30 dark:border-amber-800 dark:text-amber-400">
                             <Clock size={10} />
-                            {t('registry.status_unpublished')}
+                            {t('registry.status_registered')}
                         </span>
                     )
                 })()}
