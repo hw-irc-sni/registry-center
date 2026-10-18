@@ -282,15 +282,49 @@ container name (`openan-registry-center`).
 docker network create openan-net
 ```
 
+**Prepare** (first run only, from the repository root):
+
+1. Create the config files. `.env` and `models.yaml` are untracked; the
+   container fails to start if `models.yaml` is missing:
+   ```bash
+   cp .env.example .env
+   cp etc/config/models.yaml.example etc/config/models.yaml
+   ```
+2. Add two random secrets to `.env`. Without them the service exits at startup
+   with `integration.auth.fingerprint_key is required` /
+   `integration.auth.static.hmac_key is required`:
+   ```bash
+   echo "INTEGRATION_FINGERPRINT_KEY=$(openssl rand -hex 32)" >> .env
+   echo "INTEGRATION_TOKEN_HMAC_KEY=$(openssl rand -hex 32)" >> .env
+   ```
+3. Add at least one caller credential to `etc/conf/integration_credentials.conf`
+   (default `static_bearer` auth refuses to start with none). Store only the
+   HMAC digest of a token, never the token itself. Generate the digest with
+   `python -m agent_registry.integration.token_digest` (it prompts for the token
+   and uses `INTEGRATION_TOKEN_HMAC_KEY`), then add:
+   ```properties
+   credential.dev.identity=dev-analytics
+   credential.dev.token_hash=<64-hex-digest>
+   credential.dev.role=analytics_tool
+   ```
+   Roles: `nms_oss`, `vendor_agent`, `partner_service`, `analytics_tool`. See the
+   [Integration Guide](docs/en/Registry%20Center%20Integration%20Guide.md#static-bearer-token).
+   Don't commit real digests.
+4. Create the mounted directories owned by the container user (UID 10001).
+   If Docker creates them first they are root-owned and the app crashes with
+   `PermissionError` on `/opt/registry-center/log`
+   (see `docs/container-deployment.md`):
+   ```bash
+   mkdir -p data log etc/ssl etc/sign_cert
+   sudo chown -R 10001:10001 data log
+   chmod 700 data log
+   ```
+
 **Run** — `docker-compose.yml` defaults to plain HTTP with token-based owner
-identity (see `docs/transport-runtime.md`). Runtime credentials come from an
-untracked `.env` (copy `.env.example`), and the LLM config is mounted from an
-untracked `etc/config/models.yaml` (copy `models.yaml.example`; the container
-fails to start if it is missing):
+identity (see `docs/transport-runtime.md`):
 ```bash
-cp .env.example .env
-cp etc/config/models.yaml.example etc/config/models.yaml
 docker compose up -d --build
+curl http://127.0.0.1:5000/health    # {"status":"ok"}
 ```
 
 **HTTPS / mTLS** — opt in with `REGISTRY_ENABLE_HTTPS=true` (and
