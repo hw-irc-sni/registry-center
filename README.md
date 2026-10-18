@@ -284,9 +284,12 @@ docker network create openan-net
 
 **Run** — `docker-compose.yml` defaults to plain HTTP with token-based owner
 identity (see `docs/transport-runtime.md`). Runtime credentials come from an
-untracked `.env` (copy `.env.example`):
+untracked `.env` (copy `.env.example`), and the LLM config is mounted from an
+untracked `etc/config/models.yaml` (copy `models.yaml.example`; the container
+fails to start if it is missing):
 ```bash
 cp .env.example .env
+cp etc/config/models.yaml.example etc/config/models.yaml
 docker compose up -d --build
 ```
 
