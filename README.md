@@ -269,6 +269,37 @@ This project is delivered as **source code only**. Users are responsible for:
 
 > **Warning:** This is an internal system module. Do not expose it to the public internet without additional firewall, WAF, and authentication layers.
 
+### Docker Compose
+
+Registry Center is one of three OpenAN components meant to run together
+(`registry-center`, [`orchestration-center`](https://github.com/hw-irc-sni/orchestration-center),
+[`prompt-registry`](https://github.com/hw-irc-sni/prompt-registry)), sharing
+the `openan-net` Docker network so it's reachable from the other two by
+container name (`openan-registry-center`).
+
+**One-time setup** (once for all three components, not per-repo):
+```bash
+docker network create openan-net
+```
+
+**Run** — `docker-compose.yml` defaults to plain HTTP with token-based owner
+identity (see `docs/transport-runtime.md`). Runtime credentials come from an
+untracked `.env` (copy `.env.example`):
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+**HTTPS / mTLS** — opt in with `REGISTRY_ENABLE_HTTPS=true` (and
+`REGISTRY_VERIFY_CLIENT=true` for client certificates) after provisioning
+certs under `etc/ssl` (see the [Security Guide](docs/en/Registry%20Center%20Security%20Guide.md)).
+
+Variables in `environment:` read from the host shell or `.env` first, falling
+back to the default in the file — e.g. `REGISTRY_PORT=6000 docker compose up -d`.
+
+> Keep dependent components on the same transport: if this service runs with
+> HTTPS enabled, orchestration-center must be configured to call it over HTTPS.
+
 ## Constraints
 
 - Single-instance deployment (not distributed)
