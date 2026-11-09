@@ -139,7 +139,10 @@ also returns 404 by default. Enable it with `tmf639.enabled=true` (or
 main port's identity mode, rate limits, signature verification, approval and owner
 checks. Set `registry.public.base_url` to the externally visible base (for example
 the ODA Canvas gateway URL with the component prefix) so resource `href` and
-`Location` values resolve for clients. See the API Reference section "TMF639
+`Location` values resolve for clients. Its `/hub` event subscriptions are stored in
+the existing subscriptions table (the format is kept in the filters column, so no
+schema change) and need `broadcast.enabled=true` plus the listener host in
+`broadcast.callback.allowlist`. See the API Reference section "TMF639
 Resource Inventory facade".
 
 ## Signatures, semantic errors and tags

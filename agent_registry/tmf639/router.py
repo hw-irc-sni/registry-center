@@ -15,6 +15,9 @@ Endpoints:
 - POST   /resource       register a signed AgentCard
 - PATCH  /resource/{id}  replace the signed AgentCard (merge patch)
 - DELETE /resource/{id}  deregister
+- POST   /hub            subscribe to inventory change events (see events.py)
+- GET    /hub/{id}       read a subscription
+- DELETE /hub/{id}       unsubscribe
 
 The facade adds no business rules of its own: registration and update run
 the main port's shared flows (content safety, signature verification,
@@ -40,7 +43,9 @@ from agent_registry.identity import TOKEN, identity_mode
 from agent_registry.model.agent_layer import normalize_registration_item
 from agent_registry.registry_instance import get_registry
 from agent_registry.status import DISCOVERABLE_STATUS, normalize_status
-from agent_registry.tmf639 import mapping
+from agent_registry.broadcast.callback_policy import validate_callback_destination
+from agent_registry.broadcast.subscriptions import Subscription
+from agent_registry.tmf639 import events, mapping
 from common.custom.custom_handle import HandlerRegistry
 from common.custom.interface_type import InterfaceType
 from common.log.audit_logger import OperationName
@@ -112,14 +117,20 @@ class TmfCaller:
         return bool(self.owner) and self.owner == getattr(record, 'owner', None)
 
 
+def _is_hub_route(request: Request) -> bool:
+    # The matched route, not the raw URL path, so a mount prefix cannot change the answer.
+    route_path = getattr(request.scope.get('route'), 'path', '') or ''
+    return route_path.startswith(events.HUB_PATH)
+
+
 async def tmf_guard(request: Request) -> TmfCaller:
     """Feature flag, then authentication and the TMF639 role policy.
 
     Token mode reuses the main-port credential provider and stores the
     principal where resolve_caller_identity() expects it, so owner checks work
-    exactly as on the main port. Reads are open to every authenticated role;
-    writes need nms_oss or vendor_agent (vendors are further limited to their
-    own cards by the owner check). Other identity modes keep the main port's
+    exactly as on the main port. Reads and hub subscriptions are open to every
+    authenticated role; resource writes need nms_oss or vendor_agent (vendors
+    are further limited to their own cards by the owner check). Other identity modes keep the main port's
     behaviour: the AUTHENTICATE slot plus certificate/proxy owner identity.
     """
     config = get_conf()
@@ -141,7 +152,8 @@ async def tmf_guard(request: Request) -> TmfCaller:
             if not isinstance(principal, Principal) or not principal.identity or principal.role is None:
                 raise TMFError(status.HTTP_503_SERVICE_UNAVAILABLE,
                                'Authentication provider returned no verified identity')
-            if request.method not in ('GET', 'HEAD') and principal.role not in _WRITE_ROLES:
+            if (request.method not in ('GET', 'HEAD') and principal.role not in _WRITE_ROLES
+                    and not _is_hub_route(request)):
                 raise TMFError(status.HTTP_403_FORBIDDEN,
                                'Role is not permitted to modify agent resources')
             request.scope['registry_principal'] = principal
@@ -161,11 +173,13 @@ tmf639_router = APIRouter(prefix=mapping.API_BASE_PATH, tags=['TMF639 Resource I
 
 # ---------- helpers ----------
 
-def _href_base(request: Request) -> str:
+def _public_base(request: Request) -> str:
     base = str(get_conf().get('registry.public.base_url', '') or '').strip().rstrip('/')
-    if not base:
-        base = str(request.base_url).rstrip('/')
-    return base + mapping.RESOURCE_PATH
+    return base or str(request.base_url).rstrip('/')
+
+
+def _href_base(request: Request) -> str:
+    return _public_base(request) + mapping.RESOURCE_PATH
 
 
 def _health_of(name: str, organization: str):
@@ -419,4 +433,77 @@ async def delete_resource(resource_id: str, request: Request,
                                        caller=server._audit_caller(server._caller_identity(request)))
     if not success:
         raise TMFError(status.HTTP_404_NOT_FOUND, 'Resource not found')
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------- hub (event subscriptions) ----------
+
+def _broadcast_service():
+    from agent_registry.broadcast import get_broadcast_service
+    service = get_broadcast_service()
+    if not service.broadcast_enabled:
+        raise TMFError(status.HTTP_503_SERVICE_UNAVAILABLE, 'Change broadcast is disabled')
+    return service
+
+
+def _hub_subscription(service, hub_id: str) -> Subscription:
+    subscription = service.subscription_store.get(hub_id)
+    # Native subscriptions share the store but are not hubs.
+    if subscription is None or subscription.format != events.SUBSCRIPTION_FORMAT:
+        raise TMFError(status.HTTP_404_NOT_FOUND, 'Hub not found')
+    return subscription
+
+
+@tmf639_router.post('/hub', status_code=status.HTTP_201_CREATED,
+                    summary='Subscribe to resource inventory events')
+async def create_hub(request: Request, caller: TmfCaller = Depends(tmf_guard)):
+    body = await _json_object(request)
+    callback, query, secret = body.get('callback'), body.get('query'), body.get('secret')
+    if not isinstance(callback, str) or not callback:
+        raise TMFError(status.HTTP_400_BAD_REQUEST, "'callback' is required")
+    if query is not None and not isinstance(query, str):
+        raise TMFError(status.HTTP_400_BAD_REQUEST, "'query' must be a string")
+    if secret is not None and (not isinstance(secret, str) or not secret):
+        raise TMFError(status.HTTP_400_BAD_REQUEST, "'secret' must be a non-empty string")
+    try:
+        event_types = events.native_event_types(query)
+        validate_callback_destination(callback)
+    except ValueError as exc:
+        raise TMFError(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    server = _server()
+    with _tmf_errors():
+        await _rate_limit(request, 'subscription')
+        service = _broadcast_service()
+        async with server.semaphore_guard(server.subscription_semaphore):
+            created = service.subscription_store.create(Subscription(
+                subscription_id='', callback_url=callback, event_types=event_types,
+                secret=secret, format=events.SUBSCRIPTION_FORMAT, query=query))
+            if service.dispatcher is not None:
+                service.dispatcher.add_subscription(created)
+    logger.info('TMF639 hub created: {} (client {})', created.subscription_id, caller.client_ip)
+    location = f"{_public_base(request)}{events.HUB_PATH}/{created.subscription_id}"
+    return JSONResponse(status_code=status.HTTP_201_CREATED, content=events.to_hub(created),
+                        headers={'Location': location})
+
+
+@tmf639_router.get('/hub/{hub_id}', summary='Retrieve an event subscription')
+async def retrieve_hub(hub_id: str, request: Request, caller: TmfCaller = Depends(tmf_guard)):
+    with _tmf_errors():
+        await _rate_limit(request, 'subscription')
+        subscription = _hub_subscription(_broadcast_service(), hub_id)
+    return JSONResponse(status_code=status.HTTP_200_OK, content=events.to_hub(subscription))
+
+
+@tmf639_router.delete('/hub/{hub_id}', status_code=status.HTTP_204_NO_CONTENT,
+                      summary='Remove an event subscription')
+async def delete_hub(hub_id: str, request: Request, caller: TmfCaller = Depends(tmf_guard)):
+    with _tmf_errors():
+        await _rate_limit(request, 'subscription')
+        service = _broadcast_service()
+        _hub_subscription(service, hub_id)
+        if not service.subscription_store.delete(hub_id):
+            raise TMFError(status.HTTP_404_NOT_FOUND, 'Hub not found')
+        if service.dispatcher is not None:
+            service.dispatcher.remove_subscription(hub_id)
+    logger.info('TMF639 hub deleted: {} (client {})', hub_id, caller.client_ip)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

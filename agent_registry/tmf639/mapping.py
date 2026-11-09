@@ -131,6 +131,11 @@ def _primary_interface(card) -> Tuple[str, str]:
     return first.url or '', first.protocol_version or ''
 
 
+def health_states(health_status: Optional[str]) -> Optional[Tuple[str, str]]:
+    """(operationalState, availabilityStatus) for a heartbeat status, None when unknown."""
+    return _HEALTH_STATES.get(health_status)
+
+
 def to_resource(record, href_base: str, *, health=None, include_owner: bool = False) -> Dict[str, Any]:
     """Build the TMF639 LogicalResource for a stored AgentRecord.
 
@@ -196,8 +201,9 @@ def to_resource(record, href_base: str, *, health=None, include_owner: bool = Fa
     health_status = None
     if health is not None:
         health_status = getattr(health.status, 'value', health.status)
-    if health_status in _HEALTH_STATES:
-        resource['operationalState'], resource['availabilityStatus'] = _HEALTH_STATES[health_status]
+    states = health_states(health_status)
+    if states:
+        resource['operationalState'], resource['availabilityStatus'] = states
         characteristics.append(_characteristic(CHAR_HEALTH_STATUS, health_status))
         last_seen = getattr(health, 'last_heartbeat_at', None)
         if last_seen is not None:

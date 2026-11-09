@@ -28,13 +28,28 @@ class Subscription:
     tags: Optional[List[str]] = None
     secret: Optional[str] = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    #: Delivery format: None is the native batch body; 'tmf639' is one TMF639
+    #: event per POST (subscriptions created through the TMF639 /hub). `query`
+    #: is the TMF hub query string, kept verbatim for GET /hub/{id}.
+    format: Optional[str] = None
+    query: Optional[str] = None
+
+    def _filters(self) -> Dict:
+        # format/query ride in the filters object so the SQL table keeps its
+        # columns; they are written only when set, so native rows are unchanged.
+        filters = {"organizations": self.organizations, "tags": self.tags}
+        if self.format:
+            filters["format"] = self.format
+        if self.query is not None:
+            filters["query"] = self.query
+        return filters
 
     def to_dict(self, include_secret: bool = False) -> Dict:
         payload = {
             "subscription_id": self.subscription_id,
             "callback_url": self.callback_url,
             "event_types": self.event_types,
-            "filters": {"organizations": self.organizations, "tags": self.tags},
+            "filters": self._filters(),
             "created_at": self.created_at,
         }
         if include_secret:
@@ -52,6 +67,8 @@ class Subscription:
             tags=filters.get("tags"),
             secret=payload.get("secret"),
             created_at=payload.get("created_at", ""),
+            format=filters.get("format"),
+            query=filters.get("query"),
         )
 
 
@@ -155,7 +172,7 @@ class SqlSubscriptionStore(SubscriptionStore):
                 f"filters_json, secret, created_at) VALUES ({self._ph}, {self._ph}, {self._ph}, {self._ph}, {self._ph}, {self._ph})",
                 (subscription.subscription_id, subscription.callback_url,
                  json.dumps(subscription.event_types or []),
-                 json.dumps({"organizations": subscription.organizations, "tags": subscription.tags}),
+                 json.dumps(subscription._filters()),
                  subscription.secret, subscription.created_at)
             )
             return subscription
@@ -170,6 +187,8 @@ class SqlSubscriptionStore(SubscriptionStore):
             tags=filters.get("tags"),
             secret=row[4],
             created_at=row[5] or "",
+            format=filters.get("format"),
+            query=filters.get("query"),
         )
 
     def get(self, subscription_id: str) -> Optional[Subscription]:

@@ -1693,6 +1693,11 @@ JWKS `/rest/v1/registry-center/keys` 免应用 Token 认证，但不绕过 TLS�
 | `POST` | `/resource` | 注册一个已签名的AgentCard |
 | `PATCH` | `/resource/{id}` | 替换已签名的AgentCard（全量更新） |
 | `DELETE` | `/resource/{id}` | 注销（204） |
+| `POST` | `/hub` | 创建变更订阅（格式 `tmf639`） |
+| `GET` | `/hub/{id}` | 查询hub订阅 |
+| `DELETE` | `/hub/{id}` | 删除hub订阅（204） |
+
+与实现完全一致的OpenAPI描述见 [`docs/openapi/tmf639-a2a-agent-v5.yaml`](../openapi/tmf639-a2a-agent-v5.yaml)。
 
 该接口不引入新的业务规则。注册和更新沿用原生接口的内容安全检查、签名校验、注册中心签名和审批流程，PATCH和DELETE沿用相同的属主校验，读取沿用发现接口的可见性规则。
 
@@ -1739,11 +1744,34 @@ JWKS `/rest/v1/registry-center/keys` 免应用 Token 认证，但不绕过 TLS�
 
 **认证。** 主端口Token中间件只覆盖 `/rest/v1/registry-center`，因此该接口自带校验。在 `owner.identity.mode=token` 下使用同一认证提供方：
 
-- 所有已认证角色都可读取。
-- POST、PATCH、DELETE需要 `vendor_agent` 或 `nms_oss` 角色，其他角色返回403。
+- 所有已认证角色都可读取，也都可创建 `/hub` 订阅。
+- `/resource` 上的POST、PATCH、DELETE需要 `vendor_agent` 或 `nms_oss` 角色，其他角色返回403。
 
 其他身份模式沿用主端口行为（证书或可信代理的属主身份，以及AUTHENTICATE处理器）。
 
 **错误。** 采用 TMF630 错误体：`{"@type": "Error", "code": "404", "reason": "Not Found", "status": "404", "message": "..."}`。状态码与原生接口一致（401签名或身份无效、403非属主或角色不允许、409重复、422卡片校验失败、429限流）。仅Milvus部署（无权威存储）时所有操作返回503。超过1 MB的请求体（413）和超过1024字符的URL（414）在路由前被拒绝，响应为纯文本。
 
-本版本不包含变更通知（`/hub`）。
+**变更通知（`/hub`）。** hub就是以TMF639格式投递的普通变更广播订阅，因此需要 `broadcast.enabled=true`（否则返回503），且回调主机须在 `broadcast.callback.allowlist` 中（否则返回400）。hub与原生订阅共用订阅存储，因此也会出现在原生管理订阅列表中（`filters.format: tmf639`），并可在那里删除。`/hub/{id}` 对原生订阅返回404。
+
+- `POST /hub` 请求体：`{"callback": "https://listener.example/tmf639", "query": "eventType=ResourceCreateEvent,ResourceDeleteEvent"}`。`query` 可选，仅支持 `eventType`（逗号分隔或重复出现），其他查询返回400。可选的 `secret`（注册中心扩展字段，不会回显）与原生webhook一样对每个请求体签名：`X-Registry-Signature: sha256=HMAC(secret, "<X-Registry-Timestamp>.<body>")`。
+- 每个事件单独POST到 `callback`，地址原样使用（不追加 `/listener/...`）。请求体为TMF639 v5事件：`@type`/`eventType`、`eventId`、`eventTime`、`event.resource`。
+- 事件描述的是**已发布的资源清单**，因为它们来自原生的可发现性事件：
+
+| 原生事件 | TMF639事件 | `event.resource` |
+|----------|------------|------------------|
+| `AGENT_REGISTERED`（卡片变为已发布） | `ResourceCreateEvent` | 由事件中的卡片生成的完整资源 |
+| `AGENT_UPDATED`（已发布卡片变更） | `ResourceAttributeValueChangeEvent` | 由事件中的卡片生成的完整资源 |
+| `AGENT_DEREGISTERED`（卡片退出发现） | `ResourceDeleteEvent` | `id`、`href`、`name` |
+| 已发布卡片的 `AGENT_REVIEW_DEPRECATED` | `ResourceStateChangeEvent` | `id`、`href`、`name`、`administrativeState: shuttingDown`、`lifecycleState: pendingRemoval` |
+| `AGENT_HEALTH_CHANGED` | `ResourceStateChangeEvent` | `id`、`href`、`name`、`operationalState`、`availabilityStatus` |
+| `AGENT_REVIEW_REJECTED`、`SYNC_REQUIRED`、未发布卡片的废弃 | 不发送 | |
+
+由此可知：
+
+- `POST /resource` 若进入待审核（`registered`）状态，不发送任何事件；卡片审批通过后才发送 `ResourceCreateEvent`。
+- 已发布卡片退回审核时发送 `ResourceDeleteEvent`。
+- 卡片废弃后最终被删除时不再发送 `ResourceDeleteEvent`，因为它已退出发现。
+- 事件从不包含属主、卡片变更时的健康状态或废弃原因。
+- 仅在设置了 `registry.public.base_url` 时 `href` 才是绝对地址，否则为服务端相对路径。
+
+投递沿用变更广播的保证：至少一次，先进程内重试，再由持久化重试扫描重试，直到 `broadcast.delivery.max.attempts`。同一hub内按顺序投递，但重试时不保证顺序。某次POST失败会中止当前批次，其余事件在下一轮轮询时发送。hub超过 `broadcast.max.events.per.second` 时，超出的事件会等待，而不会降级为原生的 `SYNC_REQUIRED` 摘要。TMF639没有变更游标：中断恢复后请用 `GET /resource` 重新列出。

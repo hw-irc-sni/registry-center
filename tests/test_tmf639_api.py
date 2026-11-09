@@ -439,3 +439,123 @@ def test_non_array_characteristics_are_400(env, value):
     response = http.post(BASE, json={'resourceCharacteristic': value})
     assert response.status_code == 400
     assert response.json()['@type'] == 'Error'
+
+
+# ---------- hub (event subscriptions) ----------
+
+HUB = '/tmf-api/resourceInventoryManagement/v5/hub'
+
+
+@pytest.fixture
+def broadcast(monkeypatch):
+    from agent_registry.broadcast.subscriptions import MemorySubscriptionStore
+    service = MagicMock()
+    service.broadcast_enabled = True
+    service.subscription_store = MemorySubscriptionStore()
+    monkeypatch.setattr('agent_registry.broadcast.get_broadcast_service', lambda: service)
+    monkeypatch.setattr('agent_registry.broadcast.callback_policy.get_conf',
+                        lambda: {'broadcast.callback.allowlist': 'hooks.example'})
+    return service
+
+
+def test_hub_subscription_is_a_tmf639_format_subscription(env, broadcast):
+    http, _, _, _ = env
+    response = http.post(HUB, json={'callback': 'https://hooks.example/tmf',
+                                    'query': 'eventType=ResourceCreateEvent', 'secret': 's3cret'})
+    assert response.status_code == 201, response.text
+    hub = response.json()
+    assert hub == {'@type': 'Hub', 'id': hub['id'], 'callback': 'https://hooks.example/tmf',
+                   'query': 'eventType=ResourceCreateEvent'}
+    assert response.headers['location'].endswith(f"{HUB}/{hub['id']}")
+    stored = broadcast.subscription_store.get(hub['id'])
+    assert (stored.format, stored.event_types, stored.secret) == ('tmf639', ['AGENT_REGISTERED'], 's3cret')
+    broadcast.dispatcher.add_subscription.assert_called_once_with(stored)
+
+    assert http.get(f"{HUB}/{hub['id']}").json() == hub
+    assert http.delete(f"{HUB}/{hub['id']}").status_code == 204
+    broadcast.dispatcher.remove_subscription.assert_called_once_with(hub['id'])
+    assert http.get(f"{HUB}/{hub['id']}").status_code == 404
+
+
+@pytest.mark.parametrize('body, message', [
+    ({}, "'callback' is required"),
+    ({'callback': 'https://evil.example/tmf'}, 'allowlist'),
+    ({'callback': 'https://hooks.example/tmf', 'query': 'eventType=Nope'}, 'Unknown eventType'),
+    ({'callback': 'https://hooks.example/tmf', 'query': 'name=x'}, 'only eventType'),
+    ({'callback': 'https://hooks.example/tmf', 'query': 3}, "'query' must be a string"),
+    ({'callback': 'https://hooks.example/tmf', 'secret': ''}, "'secret'"),
+])
+def test_invalid_hub_requests_are_400(env, broadcast, body, message):
+    http, _, _, _ = env
+    response = http.post(HUB, json=body)
+    assert response.status_code == 400, response.text
+    assert message in response.json()['message']
+    assert broadcast.subscription_store.list_all() == []
+
+
+def test_hub_needs_change_broadcast(env, broadcast):
+    http, _, _, _ = env
+    broadcast.broadcast_enabled = False
+    response = http.post(HUB, json={'callback': 'https://hooks.example/tmf'})
+    assert response.status_code == 503
+    assert response.json()['message'] == 'Change broadcast is disabled'
+
+
+def test_native_subscriptions_are_not_hubs(env, broadcast):
+    from agent_registry.broadcast.subscriptions import Subscription
+    http, _, _, _ = env
+    native = broadcast.subscription_store.create(Subscription('', 'https://hooks.example/native'))
+    assert http.get(f'{HUB}/{native.subscription_id}').status_code == 404
+    assert http.delete(f'{HUB}/{native.subscription_id}').status_code == 404
+    assert broadcast.subscription_store.get(native.subscription_id) is not None
+
+
+def test_any_authenticated_role_may_subscribe_but_not_write_resources(env, token, broadcast):
+    http, _, _, _ = env
+    partner = as_role('partner_service', 'partner-a')
+    assert http.post(BASE, json=resource_body(), headers=partner).status_code == 403
+    response = http.post(HUB, json={'callback': 'https://hooks.example/tmf'}, headers=partner)
+    assert response.status_code == 201, response.text
+    assert http.delete(f"{HUB}/{response.json()['id']}", headers=partner).status_code == 204
+
+
+def test_tmf639_lifecycle_produces_the_documented_hub_events(env):
+    """Real core events (proto field names, discoverability rules) -> TMF639 events."""
+    from agent_registry.broadcast.outbox import SqlOutbox
+    from agent_registry.tmf639.events import to_tmf_event
+    http, core, _, _ = env
+    assert http.post(BASE, json=resource_body(card(), resourceCharacteristic=[
+        {'name': 'agentCard', 'value': card()}, {'name': 'layer', 'value': 'network'}])).status_code == 201
+    assert http.patch(f'{BASE}/{RESOURCE_ID}', json=resource_body(card(description='v2')),
+                      headers=MERGE_PATCH).status_code == 200
+    assert http.delete(f'{BASE}/{RESOURCE_ID}').status_code == 204
+
+    converted = [to_tmf_event(event, BASE) for event in SqlOutbox(core.storage).list_after(0, 10)]
+    assert [body['eventType'] for body in converted] == [
+        'ResourceCreateEvent', 'ResourceAttributeValueChangeEvent', 'ResourceDeleteEvent']
+    created = converted[0]['event']['resource']
+    assert created['id'] == RESOURCE_ID and chars(created)['layer'] == 'network'
+    assert chars(created)['url'] == 'https://agents.acme.example/ran'
+    assert converted[1]['event']['resource']['description'] == 'v2'
+
+
+def test_pending_registration_produces_no_hub_event(env):
+    from agent_registry.broadcast.outbox import SqlOutbox
+    http, core, _, _ = env
+    server.config['agent_approval_enabled'] = 'true'
+    assert http.post(BASE, json=resource_body()).status_code == 201
+    assert SqlOutbox(core.storage).list_after(0, 10) == []
+
+
+def test_published_profile_documents_exactly_the_implemented_operations():
+    import pathlib
+    import yaml
+    profile = yaml.safe_load((pathlib.Path(__file__).parents[1] / 'docs/openapi/tmf639-a2a-agent-v5.yaml')
+                             .read_text(encoding='utf-8'))
+    documented = {(path.replace('{id}', '{x}'), method.upper())
+                  for path, item in profile['paths'].items()
+                  for method in item if method != 'parameters'}
+    prefix = profile['servers'][0]['url']
+    implemented = {(route.path[len(prefix):].replace('{resource_id}', '{x}').replace('{hub_id}', '{x}'), method)
+                   for route in tmf_router.tmf639_router.routes for method in route.methods}
+    assert documented == implemented
