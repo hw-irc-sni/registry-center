@@ -493,9 +493,11 @@ def test_invalid_hub_requests_are_400(env, broadcast, body, message):
     assert broadcast.subscription_store.list_all() == []
 
 
-def test_hub_needs_change_broadcast(env, broadcast):
+def test_hub_needs_change_broadcast(env, broadcast, monkeypatch):
     http, _, _, _ = env
     broadcast.broadcast_enabled = False
+    # as deployed: broadcast off means no allowlist either; the answer must still be 503
+    monkeypatch.setattr('agent_registry.broadcast.callback_policy.get_conf', lambda: {})
     response = http.post(HUB, json={'callback': 'https://hooks.example/tmf'})
     assert response.status_code == 503
     assert response.json()['message'] == 'Change broadcast is disabled'

@@ -474,15 +474,16 @@ async def create_hub(request: Request, caller: TmfCaller = Depends(tmf_guard)):
         raise TMFError(status.HTTP_400_BAD_REQUEST, "'query' must be a string")
     if secret is not None and (not isinstance(secret, str) or not secret):
         raise TMFError(status.HTTP_400_BAD_REQUEST, "'secret' must be a non-empty string")
+    server = _server()
+    with _tmf_errors():
+        await _rate_limit(request, 'subscription')
+        service = _broadcast_service()  # 503 first: no allowlist is configured while broadcast is off
     try:
         event_types = events.native_event_types(query)
         validate_callback_destination(callback)
     except ValueError as exc:
         raise TMFError(status.HTTP_400_BAD_REQUEST, str(exc)) from None
-    server = _server()
     with _tmf_errors():
-        await _rate_limit(request, 'subscription')
-        service = _broadcast_service()
         async with server.semaphore_guard(server.subscription_semaphore):
             created = service.subscription_store.create(Subscription(
                 subscription_id='', callback_url=callback, event_types=event_types,
