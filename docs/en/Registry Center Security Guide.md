@@ -403,7 +403,7 @@ When the change broadcast capability is enabled (`broadcast.enabled=true`), the 
 
 ### Callback URL SSRF Protection
 
-Subscription callback URLs are HTTPS-only by default; HTTP can be allowed only in development environments via `broadcast.allow.http.callbacks=true`. `broadcast.callback.allowlist` (comma-separated domain names) is **mandatory**: it must be non-empty before subscriptions can be created, and every delivery re-validates the destination against it, preventing the Registry Center from being tricked into sending requests to internal network addresses. Leaving it empty fails closed — creating a subscription returns 422 and no delivery is attempted.
+Subscription callback URLs are HTTPS-only by default; HTTP can be allowed only in development environments via `broadcast.allow.http.callbacks=true`. `broadcast.callback.allowlist` (comma-separated domain names) is **mandatory**: it must be non-empty before subscriptions can be created, and every delivery re-validates the destination against it, preventing the Registry Center from being tricked into sending requests to internal network addresses. Leaving it empty fails closed — creating a subscription returns 422 and no delivery is attempted. Callback certificates are always verified: `broadcast.callback.ca.file` can add private CAs to the default trust store for deliveries, but cannot disable verification, and a bundle that fails to load stops startup.
 
 ### Webhook Message Signature Verification
 

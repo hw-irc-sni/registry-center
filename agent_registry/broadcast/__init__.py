@@ -5,10 +5,12 @@
 
 """Change broadcast subsystem: event bus, outbox, subscriptions, webhook dispatcher."""
 
+import ssl
 import threading
 from pathlib import Path
 from typing import Optional
 
+import certifi
 from loguru import logger
 
 from agent_registry.broadcast.event_bus import EventBus
@@ -42,6 +44,27 @@ def _truthy(config: dict, key: str, default: str = "false") -> bool:
     return str(config.get(key, default)).strip().lower() == "true"
 
 
+def callback_ssl_context(ca_file: Optional[str]) -> Optional[ssl.SSLContext]:
+    """TLS context for webhook deliveries that trusts ``ca_file`` in addition to the default CAs.
+
+    Returns None when no file is configured, so the client keeps httpx's default verification. A
+    relative path is resolved against the component root. Unreadable or certificate-less files raise
+    RuntimeError: broadcast must not start with weaker or broken callback TLS than configured.
+    """
+    ca_file = str(ca_file or "").strip()
+    if not ca_file:
+        return None
+    path = Path(ca_file)
+    if not path.is_absolute():
+        path = Path(get_root_path()) / path
+    try:
+        context = ssl.create_default_context(cafile=certifi.where())
+        context.load_verify_locations(cafile=str(path))
+    except (OSError, ssl.SSLError) as exc:
+        raise RuntimeError(f"broadcast.callback.ca.file: cannot load CA bundle {path}: {exc}") from exc
+    return context
+
+
 class BroadcastService:
     """Wires the outbox, subscription store, event bus, and dispatcher together."""
 
@@ -67,6 +90,7 @@ class BroadcastService:
                 retention_days=_int_conf(config, "broadcast.outbox.retention.days", 7),
                 delivery_max_attempts=_int_conf(config, "broadcast.delivery.max.attempts", 5),
                 retry_interval=_float_conf(config, "broadcast.delivery.retry.interval", 60.0),
+                verify=callback_ssl_context(config.get("broadcast.callback.ca.file", "")),
             )
             self.event_bus.attach_dispatcher(self.dispatcher)
 

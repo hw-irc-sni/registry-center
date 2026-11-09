@@ -119,6 +119,12 @@ are rejected, and redirects are not followed. Destination permission is checked
 again before each send attempt. Explicitly list internal telecom callbacks when
 needed; wildcard hosts are not supported.
 
+Listeners with certificates from a private CA need that CA in
+`broadcast.callback.ca.file` (a PEM bundle). It is added to the default CAs, not
+used instead of them, and only for callback deliveries. When broadcast is
+enabled and the file cannot be loaded, the Registry Center does not start.
+Certificate verification is never disabled.
+
 Hostname allowlisting does not pin DNS resolution. Deployments must control DNS
 and service egress; connection-time IP pinning remains future work. Do not grant
 untrusted users control of an allowlisted hostname.
