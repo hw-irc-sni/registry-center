@@ -1751,7 +1751,7 @@ JWKS `/rest/v1/registry-center/keys` 免应用 Token 认证，但不绕过 TLS�
 
 **错误。** 采用 TMF630 错误体：`{"@type": "Error", "code": "404", "reason": "Not Found", "status": "404", "message": "..."}`。状态码与原生接口一致（401签名或身份无效、403非属主或角色不允许、409重复、422卡片校验失败、429限流）。仅Milvus部署（无权威存储）时所有操作返回503。超过1 MB的请求体（413）和超过1024字符的URL（414）在路由前被拒绝，响应为纯文本。
 
-**变更通知（`/hub`）。** hub就是以TMF639格式投递的普通变更广播订阅，因此需要 `broadcast.enabled=true`（否则返回503），且回调主机须在 `broadcast.callback.allowlist` 中（否则返回400）。hub与原生订阅共用订阅存储，因此也会出现在原生管理订阅列表中（`filters.format: tmf639`），并可在那里删除。`/hub/{id}` 对原生订阅返回404。
+**变更通知（`/hub`）。** hub就是以TMF639格式投递的普通变更广播订阅，因此需要 `broadcast.enabled=true`（否则返回503），且回调主机须在 `broadcast.callback.allowlist` 中（否则返回400）。hub与原生订阅共用订阅存储，因此也会出现在原生管理订阅列表中（`filters.format: tmf639`），并可在那里删除。`/hub/{id}` 对原生订阅返回404。hub归属于创建它的已验证身份（token主体，或其他模式下已验证的属主身份）：除 `nms_oss` 管理员外，其他调用方对 `GET` 和 `DELETE /hub/{id}` 均得到404。未经验证身份创建的hub与原生订阅一样，任何已认证调用方都可管理。
 
 - `POST /hub` 请求体：`{"callback": "https://listener.example/tmf639", "query": "eventType=ResourceCreateEvent,ResourceDeleteEvent"}`。`query` 可选，仅支持 `eventType`（逗号分隔或重复出现），其他查询返回400。可选的 `secret`（注册中心扩展字段，不会回显）与原生webhook一样对每个请求体签名：`X-Registry-Signature: sha256=HMAC(secret, "<X-Registry-Timestamp>.<body>")`。
 - 每个事件单独POST到 `callback`，地址原样使用（不追加 `/listener/...`）。请求体为TMF639 v5事件：`@type`/`eventType`、`eventId`、`eventTime`、`event.resource`。

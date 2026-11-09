@@ -176,12 +176,12 @@ def store_factory(request, tmp_path):
 def test_hub_format_and_query_survive_a_reload(store_factory):
     created = store_factory().create(Subscription(
         '', 'https://hooks.example/tmf', event_types=['AGENT_REGISTERED'],
-        format=TMF639_FORMAT, query='eventType=ResourceCreateEvent'))
+        format=TMF639_FORMAT, query='eventType=ResourceCreateEvent', creator='partner-a'))
     native = store_factory().create(Subscription('', 'https://hooks.example/native'))
     reloaded = store_factory()
     hub = reloaded.get(created.subscription_id)
-    assert (hub.format, hub.query, hub.event_types) == (
-        TMF639_FORMAT, 'eventType=ResourceCreateEvent', ['AGENT_REGISTERED'])
+    assert (hub.format, hub.query, hub.event_types, hub.creator) == (
+        TMF639_FORMAT, 'eventType=ResourceCreateEvent', ['AGENT_REGISTERED'], 'partner-a')
     plain = reloaded.get(native.subscription_id)
     assert plain.format is None and plain.query is None
     assert plain.to_dict()['filters'] == {'organizations': None, 'tags': None}

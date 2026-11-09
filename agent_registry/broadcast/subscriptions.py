@@ -33,6 +33,8 @@ class Subscription:
     #: is the TMF hub query string, kept verbatim for GET /hub/{id}.
     format: Optional[str] = None
     query: Optional[str] = None
+    #: Verified identity that created a TMF639 hub ('' when none was verified).
+    creator: Optional[str] = None
 
     def _filters(self) -> Dict:
         # format/query ride in the filters object so the SQL table keeps its
@@ -42,6 +44,8 @@ class Subscription:
             filters["format"] = self.format
         if self.query is not None:
             filters["query"] = self.query
+        if self.creator:
+            filters["creator"] = self.creator
         return filters
 
     def to_dict(self, include_secret: bool = False) -> Dict:
@@ -69,6 +73,7 @@ class Subscription:
             created_at=payload.get("created_at", ""),
             format=filters.get("format"),
             query=filters.get("query"),
+            creator=filters.get("creator"),
         )
 
 
@@ -189,6 +194,7 @@ class SqlSubscriptionStore(SubscriptionStore):
             created_at=row[5] or "",
             format=filters.get("format"),
             query=filters.get("query"),
+            creator=filters.get("creator"),
         )
 
     def get(self, subscription_id: str) -> Optional[Subscription]:

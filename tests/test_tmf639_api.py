@@ -559,3 +559,16 @@ def test_published_profile_documents_exactly_the_implemented_operations():
     implemented = {(route.path[len(prefix):].replace('{resource_id}', '{x}').replace('{hub_id}', '{x}'), method)
                    for route in tmf_router.tmf639_router.routes for method in route.methods}
     assert documented == implemented
+
+
+def test_hub_belongs_to_its_creator(env, token, broadcast):
+    http, _, _, _ = env
+    alice, bob = as_role('partner_service', 'partner-a'), as_role('partner_service', 'partner-b')
+    hub = http.post(HUB, json={'callback': 'https://hooks.example/tmf'}, headers=alice).json()
+    assert broadcast.subscription_store.get(hub['id']).creator == 'partner-a'
+    assert http.get(f"{HUB}/{hub['id']}", headers=bob).status_code == 404
+    assert http.delete(f"{HUB}/{hub['id']}", headers=bob).status_code == 404
+    assert broadcast.subscription_store.get(hub['id']) is not None
+    assert http.get(f"{HUB}/{hub['id']}", headers=alice).status_code == 200
+    assert http.get(f"{HUB}/{hub['id']}", headers=as_role('nms_oss', 'admin')).status_code == 200
+    assert http.delete(f"{HUB}/{hub['id']}", headers=as_role('nms_oss', 'admin')).status_code == 204

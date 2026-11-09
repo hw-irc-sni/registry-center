@@ -112,6 +112,7 @@ class TmfCaller:
     client_ip: str
     is_admin: bool = False
     owner: str = ''          # verified owner identity, '' when unverified
+    identity: str = ''       # verified caller identity (token principal or owner), '' when none
 
     def owns(self, record) -> bool:
         return bool(self.owner) and self.owner == getattr(record, 'owner', None)
@@ -139,6 +140,7 @@ async def tmf_guard(request: Request) -> TmfCaller:
         raise TMFError(status.HTTP_404_NOT_FOUND, 'TMF639 API is disabled')
     client_ip = request.client.host if request.client else ''
     is_admin = False
+    principal_identity = ''
     with _tmf_errors():
         if identity_mode(_server().config) == TOKEN:
             from agent_registry.integration.app import authenticate_request
@@ -158,11 +160,13 @@ async def tmf_guard(request: Request) -> TmfCaller:
                                'Role is not permitted to modify agent resources')
             request.scope['registry_principal'] = principal
             is_admin = principal.role == CallerRole.NMS_OSS
+            principal_identity = principal.identity
         authenticate_handle = HandlerRegistry.get_handler(InterfaceType.AUTHENTICATE)
         await authenticate_handle.handle(client_ip, request)
         identity = _server()._caller_identity(request)
-    return TmfCaller(client_ip=client_ip, is_admin=is_admin,
-                     owner=identity.owner if identity.verified and identity.owner else '')
+    owner = identity.owner if identity.verified and identity.owner else ''
+    return TmfCaller(client_ip=client_ip, is_admin=is_admin, owner=owner,
+                     identity=principal_identity or owner)
 
 
 # Routes also take the guard as a parameter (FastAPI runs it once per request);
@@ -446,10 +450,15 @@ def _broadcast_service():
     return service
 
 
-def _hub_subscription(service, hub_id: str) -> Subscription:
+def _hub_subscription(service, hub_id: str, caller: TmfCaller) -> Subscription:
     subscription = service.subscription_store.get(hub_id)
     # Native subscriptions share the store but are not hubs.
     if subscription is None or subscription.format != events.SUBSCRIPTION_FORMAT:
+        raise TMFError(status.HTTP_404_NOT_FOUND, 'Hub not found')
+    # A hub belongs to the verified identity that created it; to anyone else
+    # (except administrators) it does not exist. Hubs created without a
+    # verified identity keep the native rule: any authenticated caller.
+    if subscription.creator and not caller.is_admin and subscription.creator != caller.identity:
         raise TMFError(status.HTTP_404_NOT_FOUND, 'Hub not found')
     return subscription
 
@@ -477,7 +486,8 @@ async def create_hub(request: Request, caller: TmfCaller = Depends(tmf_guard)):
         async with server.semaphore_guard(server.subscription_semaphore):
             created = service.subscription_store.create(Subscription(
                 subscription_id='', callback_url=callback, event_types=event_types,
-                secret=secret, format=events.SUBSCRIPTION_FORMAT, query=query))
+                secret=secret, format=events.SUBSCRIPTION_FORMAT, query=query,
+                creator=caller.identity or None))
             if service.dispatcher is not None:
                 service.dispatcher.add_subscription(created)
     logger.info('TMF639 hub created: {} (client {})', created.subscription_id, caller.client_ip)
@@ -490,7 +500,7 @@ async def create_hub(request: Request, caller: TmfCaller = Depends(tmf_guard)):
 async def retrieve_hub(hub_id: str, request: Request, caller: TmfCaller = Depends(tmf_guard)):
     with _tmf_errors():
         await _rate_limit(request, 'subscription')
-        subscription = _hub_subscription(_broadcast_service(), hub_id)
+        subscription = _hub_subscription(_broadcast_service(), hub_id, caller)
     return JSONResponse(status_code=status.HTTP_200_OK, content=events.to_hub(subscription))
 
 
@@ -500,7 +510,7 @@ async def delete_hub(hub_id: str, request: Request, caller: TmfCaller = Depends(
     with _tmf_errors():
         await _rate_limit(request, 'subscription')
         service = _broadcast_service()
-        _hub_subscription(service, hub_id)
+        _hub_subscription(service, hub_id, caller)
         if not service.subscription_store.delete(hub_id):
             raise TMFError(status.HTTP_404_NOT_FOUND, 'Hub not found')
         if service.dispatcher is not None:
