@@ -290,3 +290,9 @@ async def test_failed_hub_delivery_stops_the_batch(monkeypatch):
     assert [outbox.delivery_status(e.event_id, hub.subscription_id) for e in batch] == [
         'delivery_failed', 'pending']
     await dispatcher.stop()
+
+
+def test_hub_creator_is_persisted_but_never_listed():
+    sub = Subscription('', 'https://hooks.example/tmf', format=TMF639_FORMAT, creator='partner-a')
+    assert 'creator' not in sub.to_dict()['filters']
+    assert sub.to_dict(include_secret=True)['filters']['creator'] == 'partner-a'

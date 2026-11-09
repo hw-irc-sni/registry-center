@@ -36,7 +36,7 @@ class Subscription:
     #: Verified identity that created a TMF639 hub ('' when none was verified).
     creator: Optional[str] = None
 
-    def _filters(self) -> Dict:
+    def _filters(self, internal: bool = True) -> Dict:
         # format/query ride in the filters object so the SQL table keeps its
         # columns; they are written only when set, so native rows are unchanged.
         filters = {"organizations": self.organizations, "tags": self.tags}
@@ -44,7 +44,8 @@ class Subscription:
             filters["format"] = self.format
         if self.query is not None:
             filters["query"] = self.query
-        if self.creator:
+        if internal and self.creator:
+            # Persistence only: never part of an API listing.
             filters["creator"] = self.creator
         return filters
 
@@ -53,7 +54,7 @@ class Subscription:
             "subscription_id": self.subscription_id,
             "callback_url": self.callback_url,
             "event_types": self.event_types,
-            "filters": self._filters(),
+            "filters": self._filters(internal=include_secret),
             "created_at": self.created_at,
         }
         if include_secret:
