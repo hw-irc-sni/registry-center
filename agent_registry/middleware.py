@@ -17,6 +17,7 @@
 
 # middleware.py
 import asyncio
+import re
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
 from loguru import logger
@@ -88,3 +89,44 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
                     "message": f"Request processing timeout. ({self.timeout_seconds}s)"
                 }
             )
+
+
+_PREFIX_SEGMENT = re.compile(r"^[A-Za-z0-9._~-]+$")
+
+
+def normalize_path_prefix(value) -> str:
+    """'' (disabled) or '/seg[/seg...]' without a trailing slash; anything else is a config error."""
+    prefix = str(value or "").strip().rstrip("/")
+    if not prefix:
+        return ""
+    segments = prefix.split("/")
+    if segments[0] != "" or not all(_PREFIX_SEGMENT.match(s) for s in segments[1:]) or ".." in segments:
+        raise ValueError(f"path.prefix must look like /name[/name...], got {value!r}")
+    return prefix
+
+
+class PathPrefixMiddleware:
+    """Serve the whole application under an optional external path prefix as well.
+
+    A gateway that forwards `/<prefix>/rest/...` unchanged (the ODA Canvas
+    component gateway routes `/<componentName>/...` without a rewrite) reaches
+    the same routes as an in-cluster client calling `/rest/...` directly. The
+    prefix is removed before any other middleware runs, so authentication and
+    route matching only ever see the unprefixed path.
+    """
+
+    def __init__(self, app, prefix: str):
+        self.app = app
+        self.prefix = normalize_path_prefix(prefix)
+        self._raw_prefix = self.prefix.encode("ascii")
+
+    async def __call__(self, scope, receive, send):
+        if self.prefix and scope["type"] in ("http", "websocket"):
+            path = scope.get("path", "")
+            if path == self.prefix or path.startswith(self.prefix + "/"):
+                scope = dict(scope)
+                scope["path"] = path[len(self.prefix):] or "/"
+                raw_path = scope.get("raw_path")
+                if isinstance(raw_path, bytes) and raw_path.startswith(self._raw_prefix):
+                    scope["raw_path"] = raw_path[len(self._raw_prefix):] or b"/"
+        await self.app(scope, receive, send)

@@ -214,3 +214,8 @@ knowledge_graph.enabled=false
 # While false every TMF639 endpoint answers HTTP 404 (fail closed). It reuses the
 # main port's identity mode, rate limits, signature and owner checks.
 tmf639.enabled=false
+
+# Optional path prefix under which the main port also serves every route, for a
+# gateway that forwards /<prefix>/... without rewriting it (the ODA Canvas
+# component gateway uses /<componentName>). Unprefixed paths keep working.
+path.prefix=

@@ -90,7 +90,7 @@ from agent_registry.model.agent_layer import (
 from agent_registry.persistence.milvus_layer_migration import LayerMigrationRequiredError
 from agent_registry.request_validation import card_batch, parse_card, semantic_query
 from agent_registry.registry_instance import get_registry, initialize_registry
-from agent_registry.middleware import ConnectionLimitMiddleware, TimeoutMiddleware
+from agent_registry.middleware import ConnectionLimitMiddleware, PathPrefixMiddleware, TimeoutMiddleware
 from agent_registry.signature.agent_card_signature_validator import AgentCardSignatureValidator
 from agent_registry.signature.jwk_fetcher import JWKFetcher
 from agent_registry.signature.public_key_manager import PublicKeyManager
@@ -2065,6 +2065,10 @@ app.include_router(knowledge_graph_router)
 # HTTPException handler above), then the router itself.
 app.add_exception_handler(TMFError, tmf_error_handler)
 app.include_router(tmf639_router)
+
+# Optional external path prefix (e.g. the ODA Canvas /<componentName>). Added
+# last, so it is the outermost middleware: every other one sees the bare path.
+app.add_middleware(PathPrefixMiddleware, prefix=config.get('path.prefix', config.get('path_prefix', '')))
 
 # Add shutdown handler for Neo4j driver
 @app.on_event("shutdown")
