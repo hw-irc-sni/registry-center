@@ -133,6 +133,18 @@ with read and write access. Default anonymous authentication grants no graph
 permission. Neo4j remains independent of AgentCard storage and discovery; the
 API is not a tenant-isolated graph service.
 
+The TMF639 Resource Inventory v5 facade (`/tmf-api/resourceInventoryManagement/v5`)
+also returns 404 by default. Enable it with `tmf639.enabled=true` (or
+`REGISTRY_TMF639_ENABLED=true`). It adds no new storage or permissions: it uses the
+main port's identity mode, rate limits, signature verification, approval and owner
+checks. Set `registry.public.base_url` to the externally visible base (for example
+the ODA Canvas gateway URL with the component prefix) so resource `href` and
+`Location` values resolve for clients. Its `/hub` event subscriptions are stored in
+the existing subscriptions table (the format is kept in the filters column, so no
+schema change) and need `broadcast.enabled=true` plus the listener host in
+`broadcast.callback.allowlist`. See the API Reference section "TMF639
+Resource Inventory facade".
+
 ## Signatures, semantic errors and tags
 
 Registration and update await asynchronous JKU verification. A card is accepted

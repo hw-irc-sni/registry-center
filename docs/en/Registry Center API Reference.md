@@ -1476,3 +1476,99 @@ Non-empty `agents` items have `{"agentCard": <complete card>, "layer": "OMC"}`. 
 `GET /rest/v1/registry-center/agent-cards/manage` returns all review states (or the requested `status`), with `publishStatus` and `registration.layer` on each card. `statusCounts` remains the unfiltered review-state totals. `registration.layer` is the stored vendor-defined string; legacy registrations without a declared layer return `unknown`. The management response is an envelope for the UI, not a signed AgentCard registration payload. Public AgentCard discovery responses remain unchanged.
 
 The native frontend groups only explicit service/service-layer and network/network-layer labels (case/separator variants included) into its two standard tabs. Other declared values retain their original label under Other / Unspecified; missing metadata is shown as Unspecified. Organization/vendor names are never used to infer a layer. Upgrade the backend and frontend together to display existing stored layers; a new frontend against an older management API displays missing metadata as Unspecified.
+
+## TMF639 Resource Inventory facade
+
+Optional TM Forum TMF639 Resource Inventory Management **v5** view of the registry, for ODA Canvas deployments that align the Registry Center with TMFC012 Resource Inventory. It is off by default: set `tmf639.enabled=true` (or `REGISTRY_TMF639_ENABLED=true`). While it is off, every endpoint below returns 404.
+
+Base path: `/tmf-api/resourceInventoryManagement/v5`
+
+| Method | Path | Maps to |
+|--------|------|---------|
+| `GET` | `/resource` | Query AgentCards |
+| `GET` | `/resource/{id}` | Get one AgentCard |
+| `POST` | `/resource` | Register one signed AgentCard |
+| `PATCH` | `/resource/{id}` | Replace the signed AgentCard (full update) |
+| `DELETE` | `/resource/{id}` | Deregister (204) |
+| `POST` | `/hub` | Create a change subscription (format `tmf639`) |
+| `GET` | `/hub/{id}` | Read a hub subscription |
+| `DELETE` | `/hub/{id}` | Delete a hub subscription (204) |
+
+The OpenAPI profile of exactly what is implemented is [`docs/openapi/tmf639-a2a-agent-v5.yaml`](../openapi/tmf639-a2a-agent-v5.yaml).
+
+The facade adds no rules of its own. Registration and update run the same content safety, signature verification, registry signing and approval flow as the native API. PATCH and DELETE use the same owner check. Reads use the discovery visibility rule.
+
+**Resource mapping.** Each AgentCard is a `LogicalResource` with `category: A2AAgent`:
+
+- `id`: `base64url(organization) + "." + base64url(name)` (UTF-8, no padding). It is opaque and fits in one path segment.
+- `name`, `description`, `resourceVersion`: the card's `name`, `description`, `version`. `creationDate` is the registration time.
+- `resourceSpecification`: `{id: A2AAgentCard, name: "A2A AgentCard", version: <protocolVersion>}`.
+- `relatedParty`: the provider organization (role `provider`). Administrators also see the owner identity (role `owner`).
+- `resourceCharacteristic`: `agentCard` (the stored signed card, camelCase, including the registry signature), `layer`, `reviewStatus`, `skills`, `tags`, `url` and `protocolVersion` (from the first `supportedInterfaces` entry), and, when heartbeat data exists, `healthStatus` and `lastHeartbeat`.
+- `href` uses `registry.public.base_url` when it is set, so set it to the externally visible base (for example the ODA Canvas gateway URL including the component prefix).
+
+| Review status | `administrativeState` | `lifecycleState` |
+|---------------|-----------------------|------------------|
+| `published` | `unlocked` | `installed` |
+| `registered` (pending) | `locked` | `planned` |
+| `rejected` | `locked` | `planned` |
+| `deprecated` | `shuttingDown` | `pendingRemoval` |
+
+| Health | `operationalState` | `availabilityStatus` |
+|--------|--------------------|----------------------|
+| `healthy` | `enabled` | `online` |
+| `suspect` | `enabled` | `degraded` |
+| `offline` | `disabled` | `offline` |
+| unknown / heartbeat disabled | not set | not set; `unknownStatus: true` |
+
+**Visibility.** Callers see discoverable cards (published, and not hidden by heartbeat filtering), as in native discovery, plus every card they own (verified owner identity, with owner isolation enabled). Administrators (`owner.identity.mode=token` with the `nms_oss` role) see every review state, like the management list. Any other unpublished card does not exist for the caller on every method: GET, PATCH and DELETE return 404, and it is not counted in `X-Total-Count`. A PATCH or DELETE on a visible card owned by someone else returns 403 without naming the owner.
+
+**Query parameters on `GET /resource`.** The supported parameters are `fields`, `offset`, `limit` and exact-match attribute filters on `name`, `category`, `administrativeState`, `operationalState`, `lifecycleState` and `availabilityStatus` (a comma means OR), plus `relatedParty.name` (provider organization). Responses carry `X-Total-Count` and `X-Result-Count`. `filter` (JSONPath), `sort`, `before` and `after` return 501.
+
+**POST body.** A Resource whose `resourceCharacteristic` contains `agentCard` (the complete signed AgentCard object, unchanged) and optionally `layer`. One card per request. Read-only attributes copied from a GET response are ignored, but `name`, `category` and `@type` must not contradict the card. The response is 201 with the resource and a `Location` header. With approval enabled the resource comes back `locked` / `planned`.
+
+```json
+{
+  "@type": "LogicalResource",
+  "resourceCharacteristic": [
+    {"name": "agentCard", "value": {"name": "RanOptimizer", "provider": {"organization": "acme", "url": "https://acme.example"}, "...": "...", "signatures": ["..."]}},
+    {"name": "layer", "value": "network"}
+  ]
+}
+```
+
+**PATCH body.** `Content-Type: application/merge-patch+json` (or `application/json`) with `resourceCharacteristic` carrying a new signed `agentCard` and optionally `layer`. The card's name and organization must match the resource id. Any attribute other than `@type` and `resourceCharacteristic` returns 400. Replacing a rejected card resubmits it for review, as with the native update. Review state changes (publish, reject, deprecate) stay on the native review endpoints. JSON Patch (`application/json-patch+json`) returns 415. Agent cards are signed, so a field-level change would break the signature.
+
+**Authentication.** The facade has its own guard, because the main-port token middleware only covers `/rest/v1/registry-center`. In `owner.identity.mode=token` it uses the same credential provider:
+
+- Reads and `/hub` subscriptions are open to every authenticated role.
+- POST, PATCH and DELETE on `/resource` need `vendor_agent` or `nms_oss`. Other roles get 403.
+
+Other identity modes keep the main-port behaviour (certificate or trusted-proxy owner identity and the AUTHENTICATE handler).
+
+**Errors.** TMF630 Error bodies: `{"@type": "Error", "code": "404", "reason": "Not Found", "status": "404", "message": "..."}`. Status codes follow the native API (401 invalid signature or identity, 403 not owner or role, 409 duplicate, 422 card validation, 429 rate limit). In a Milvus-only deployment (no authoritative store) every operation returns 503. Bodies over 1 MB (413) and URLs over 1024 characters (414) are rejected before routing, with plain-text bodies.
+
+**Change notifications (`/hub`).** A hub is an ordinary change-broadcast subscription delivered in TMF639 format, so it needs `broadcast.enabled=true` (otherwise 503) and a callback host in `broadcast.callback.allowlist` (otherwise 400). Hubs share the subscription store, so they also appear in the native administrative subscription list (with `filters.format: tmf639`) and can be deleted there. `/hub/{id}` returns 404 for native subscriptions. A hub belongs to the verified identity that created it (the token principal, or the verified owner identity in other modes): for anyone else except `nms_oss` administrators, `GET` and `DELETE /hub/{id}` return 404. Hubs created without a verified identity can be managed by any authenticated caller, as native subscriptions can.
+
+- `POST /hub` body: `{"callback": "https://listener.example/tmf639", "query": "eventType=ResourceCreateEvent,ResourceDeleteEvent"}`. `query` is optional and only supports `eventType` (comma-separated or repeated); any other query returns 400. An optional `secret` (Registry Center extension, never returned) signs each body like native webhooks: `X-Registry-Signature: sha256=HMAC(secret, "<X-Registry-Timestamp>.<body>")`.
+- Each event is POSTed on its own, to `callback` exactly as given (no `/listener/...` suffix). The body is a TMF639 v5 event: `@type`/`eventType`, `eventId`, `eventTime`, `event.resource`.
+- Events describe the **published inventory**, because they are derived from the native discoverability events:
+
+| Native event | TMF639 event | `event.resource` |
+|--------------|--------------|------------------|
+| `AGENT_REGISTERED` (card became published) | `ResourceCreateEvent` | full resource from the card in the event |
+| `AGENT_UPDATED` (published card changed) | `ResourceAttributeValueChangeEvent` | full resource from the card in the event |
+| `AGENT_DEREGISTERED` (card left discovery) | `ResourceDeleteEvent` | `id`, `href`, `name` |
+| `AGENT_REVIEW_DEPRECATED` of a published card | `ResourceStateChangeEvent` | `id`, `href`, `name`, `administrativeState: shuttingDown`, `lifecycleState: pendingRemoval` |
+| `AGENT_HEALTH_CHANGED` | `ResourceStateChangeEvent` | `id`, `href`, `name`, `operationalState`, `availabilityStatus` |
+| `AGENT_REVIEW_REJECTED`, `SYNC_REQUIRED`, deprecation of an unpublished card | not sent | |
+
+Consequences:
+
+- A `POST /resource` that lands pending review (`registered`) sends nothing. `ResourceCreateEvent` follows when the card is approved.
+- Moving a published card back to review sends `ResourceDeleteEvent`.
+- After a deprecation, no `ResourceDeleteEvent` follows when the card is finally removed, because it had already left discovery.
+- Events never carry the owner, the health of a card change, or the deprecation reason.
+- `href` is absolute only when `registry.public.base_url` is set; otherwise it is the server-relative path.
+
+Delivery uses the change broadcast's guarantees: at-least-once, in-process retries, then the durable retry sweep up to `broadcast.delivery.max.attempts`. Order is per hub but not guaranteed across retries. A failed POST stops the current batch, and the rest is sent on the next poll. When a hub exceeds `broadcast.max.events.per.second`, the excess events wait instead of being reduced to the native `SYNC_REQUIRED` summary. There is no change cursor in TMF639: after an outage, re-list with `GET /resource`.

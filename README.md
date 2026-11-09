@@ -59,6 +59,7 @@ The Registry Center provides unified lifecycle management for **AgentCards** —
 | **Rate Limiting** | Per-endpoint rate limits (configurable: 50–100 req/s, JWK endpoint: 10 req/s) with moving-window algorithm |
 | **Heartbeat Detection** | Agents periodically report liveness; configurable failure threshold and grace period to identify offline agents promptly |
 | **Change Broadcast** | Best-effort webhooks to operator-allowlisted destinations, with HMAC signing and version-based reconciliation; version allocation is commit-ordered in the SQL persistence modes (deployment stays single-instance) and delivery state is tracked per subscriber, while retry-after-failure and exactly-once semantics are not yet guaranteed |
+| **TMF639 Resource Inventory** | Optional TM Forum TMF639 v5 view (ODA TMFC012): AgentCards as `LogicalResource`s with list/get/create/merge-patch/delete and a `/hub` for published-inventory change events; same signature, approval and owner rules as the native API |
 | **Audit Logging** | Rotating JSON audit log (time, client IP, user, operation, object, result) |
 | **CLI Administration** | Interactive CLI for agent approval, tag management, and full agent listing |
 | **Custom Extensions** | Pluggable handlers (auth, audit, decrypt, storage) and LLM providers |
@@ -67,7 +68,10 @@ See [upgrade and deployment notes](docs/en/Registry%20Center%20Upgrade%20Notes.m
 ([中文](docs/zh/注册中心升级与部署说明.md)) for identity configuration, approval
 visibility, legacy-event synchronization, and container probe setup. The generic
 knowledge-graph API is pre-embedded and disabled by default; enabling it requires
-an authenticated operator and separate graph permissions. `docker-compose.yml`
+an authenticated operator and separate graph permissions. The TMF639 facade is
+also disabled by default (`tmf639.enabled`); `path.prefix` additionally serves
+every route under a gateway prefix such as the ODA Canvas `/<componentName>`.
+`docker-compose.yml`
 is a loopback-only development example with client authentication disabled;
 it is not a production access-policy template.
 
@@ -199,8 +203,11 @@ flowchart TB
 | `GET` | `/rest/v1/registry-center/subscriptions` | List subscriptions |
 | `DELETE` | `/rest/v1/registry-center/subscriptions/{id}` | Delete a subscription |
 | `GET` | `/rest/v1/registry-center/changes` | Change reconciliation (incremental pull by version) |
+| `GET`, `POST` | `/tmf-api/resourceInventoryManagement/v5/resource` | TMF639: list / register agent resources (`tmf639.enabled`) |
+| `GET`, `PATCH`, `DELETE` | `/tmf-api/resourceInventoryManagement/v5/resource/{id}` | TMF639: get / replace the signed card / deregister |
+| `POST`, `GET`, `DELETE` | `/tmf-api/resourceInventoryManagement/v5/hub[/{id}]` | TMF639 event subscriptions (needs change broadcast) |
 
-See the [API Reference](docs/en/Registry%20Center%20API%20Reference.md) for full request/response schemas, error codes, and constraints.
+See the [API Reference](docs/en/Registry%20Center%20API%20Reference.md) for full request/response schemas, error codes, and constraints; the TMF639 profile is [`docs/openapi/tmf639-a2a-agent-v5.yaml`](docs/openapi/tmf639-a2a-agent-v5.yaml).
 
 ## Configuration
 

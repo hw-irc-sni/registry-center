@@ -35,6 +35,10 @@ from agent_registry.broadcast.events import (
 from agent_registry.broadcast.outbox import DELIVERY_ABANDONED, OutboxStore
 from agent_registry.broadcast.callback_policy import validate_callback_destination
 from agent_registry.broadcast.subscriptions import Subscription, SubscriptionStore, event_matches
+from common.util.app_config import get_conf
+
+#: Subscription.format of hubs created through the TMF639 facade.
+TMF639_FORMAT = "tmf639"
 
 
 class TokenBucket:
@@ -384,6 +388,9 @@ class WebhookDispatcher:
             TokenBucket(rate=self._max_events_per_second,
                         capacity=max(self._max_events_per_second * 2, 100.0)),
         )
+        if subscription.format == TMF639_FORMAT:
+            await self._deliver_tmf639(subscription, batch, bucket)
+            return
         if not bucket.try_consume(len(batch)):
             logger.warning(f"Rate limit hit for subscription {subscription_id}, "
                            f"degrading {len(batch)} event(s) to SYNC_REQUIRED")
@@ -399,16 +406,56 @@ class WebhookDispatcher:
             # decide this one's delivery state.
             self._outbox.mark_delivery(subscription_id, event.event_id, status)
 
+    async def _deliver_tmf639(self, subscription: Subscription, batch: List[RegistryEvent],
+                              bucket: TokenBucket) -> None:
+        """TMF639 hub delivery: one TMF event per POST, ledger marked per event.
+
+        A native SYNC_REQUIRED summary means nothing to a TMF consumer, so the
+        rate limit never degrades here: events beyond the budget stay pending
+        and the flusher offers them again once the bucket refills. Events the
+        hub does not forward (see tmf639.events) are marked delivered.
+        """
+        # Lazy: the tmf639 package imports the registry, which imports this package.
+        from agent_registry.tmf639.events import public_href_base, to_tmf_event
+        href_base = public_href_base(get_conf())
+        sid = subscription.subscription_id
+        for event in batch:
+            try:
+                body = to_tmf_event(event, href_base)
+            except Exception as e:  # never let one payload wedge the queue
+                logger.error(f"Cannot convert {event.event_id} for TMF639 hub {sid}: {type(e).__name__}")
+                self._outbox.mark_delivery(sid, event.event_id, "delivery_failed")
+                continue
+            if body is None:
+                self._outbox.mark_delivery(sid, event.event_id, "dispatched")
+                continue
+            if not bucket.try_consume(1):
+                logger.warning(f"Rate limit hit for TMF639 hub {sid}; "
+                               "remaining events stay pending")
+                return
+            delivered = await self._post(subscription, json.dumps(body, ensure_ascii=False).encode("utf-8"),
+                                         event.event_id)
+            self._outbox.mark_delivery(sid, event.event_id,
+                                       "dispatched" if delivered else "delivery_failed")
+            if not delivered:
+                # Do not hammer a failing destination with the rest of the batch:
+                # those stay pending for the next poll, this one for the retry sweep.
+                return
+
     async def _deliver_events(self, subscription: Subscription,
                               events: List[RegistryEvent], persist: bool) -> bool:
         body = json.dumps({
             "subscription_id": subscription.subscription_id,
             "events": [public_event(e).to_dict() for e in events],
         }, ensure_ascii=False).encode("utf-8")
+        return await self._post(subscription, body, events[0].event_id)
+
+    async def _post(self, subscription: Subscription, body: bytes, event_id: str) -> bool:
+        """POST one signed body with in-process retries; True on a 2xx answer."""
         timestamp = str(int(time.time()))
         headers = {
             "Content-Type": "application/json",
-            "X-Registry-Event-Id": events[0].event_id,
+            "X-Registry-Event-Id": event_id,
             "X-Registry-Timestamp": timestamp,
         }
         if subscription.secret:

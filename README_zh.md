@@ -59,13 +59,15 @@ SPDX-License-Identifier: Apache-2.0
 | **流控限流** | 按接口粒度的速率限制（可配置：50–100 次/秒，JWK 端点：10 次/秒）和并发控制 |
 | **心跳检测** | Agent 周期上报存活状态，可配置失败阈值与宽限期，及时发现离线 Agent |
 | **变更广播** | 向运维白名单内的目的地址尽力投递 Webhook（HMAC 签名、防抖、限流、Outbox 持久化、版本号对账）；SQL 持久化模式下版本号按提交顺序分配（部署形态仍为单实例），交付状态按订阅者分别记录，暂不保证失败后的自动重试与恰好一次语义 |
+| **TMF639资源清单** | 可选的 TM Forum TMF639 v5 视图（ODA TMFC012）：AgentCard 作为 `LogicalResource`，支持查询、获取、创建、合并补丁和删除，并通过 `/hub` 推送已发布资源的变更事件；签名、审批和属主规则与原生接口一致 |
 | **日志审计** | 滚动 JSON 格式审计日志，记录操作六要素（时间、客户端IP、用户、操作、对象、结果） |
 | **CLI 管理** | 交互式命令行工具，支持 Agent 审批、标签管理、全量 Agent 查询 |
 | **自定义扩展** | 可插拔的处理器（认证、审计、解密、存储）和大模型（LLM）提供者 |
 
 身份配置、审批可见性、历史事件同步与容器探针配置见[升级与部署说明](docs/zh/注册中心升级与部署说明.md)
 （[English](docs/en/Registry%20Center%20Upgrade%20Notes.md)）。通用知识图谱接口已预置且默认关闭，
-启用需要经过认证的运维身份和独立的图库权限。`docker-compose.yml` 是仅绑定回环地址、且关闭客户端
+启用需要经过认证的运维身份和独立的图库权限。TMF639接口同样默认关闭（`tmf639.enabled`）；`path.prefix`
+可让全部路由同时在网关前缀（例如 ODA Canvas 的 `/<componentName>`）下提供。`docker-compose.yml` 是仅绑定回环地址、且关闭客户端
 认证的开发示例，不作为生产访问策略模板。
 
 ## 快速开始
@@ -193,8 +195,11 @@ flowchart TB
 | `GET` | `/rest/v1/registry-center/subscriptions` | 查询订阅列表 |
 | `DELETE` | `/rest/v1/registry-center/subscriptions/{id}` | 删除订阅 |
 | `GET` | `/rest/v1/registry-center/changes` | 变更对账查询（按版本号增量拉取） |
+| `GET`, `POST` | `/tmf-api/resourceInventoryManagement/v5/resource` | TMF639：查询/注册智能体资源（`tmf639.enabled`） |
+| `GET`, `PATCH`, `DELETE` | `/tmf-api/resourceInventoryManagement/v5/resource/{id}` | TMF639：获取/替换已签名卡片/注销 |
+| `POST`, `GET`, `DELETE` | `/tmf-api/resourceInventoryManagement/v5/hub[/{id}]` | TMF639事件订阅（需开启变更广播） |
 
-完整接口规范、请求/响应示例、错误码说明请参阅 [API 参考](docs/zh/注册中心API参考.md)。
+完整接口规范、请求/响应示例、错误码说明请参阅 [API 参考](docs/zh/注册中心API参考.md)；TMF639描述文件见 [`docs/openapi/tmf639-a2a-agent-v5.yaml`](docs/openapi/tmf639-a2a-agent-v5.yaml)。
 
 ## 配置速查
 
