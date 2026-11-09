@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import json
 import random
+import ssl
 import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -82,6 +83,7 @@ class WebhookDispatcher:
                  delivery_max_attempts: int = 5,
                  retry_interval: float = 60.0,
                  client: Optional[httpx.AsyncClient] = None,
+                 verify: Optional[ssl.SSLContext] = None,
                  batch_size: int = 256, buffer_limit: int = 1024):
         self._subs = subscription_store
         self._outbox = outbox
@@ -99,8 +101,12 @@ class WebhookDispatcher:
         self._fanout_cursor = 0
         self._scheduled: Dict[str, set] = {}
         self._loop = None
-        self._client = client or httpx.AsyncClient(timeout=webhook_timeout)
+        # ``verify`` (extra callback CAs, see broadcast.callback_ssl_context) applies only to the client built here.
         self._owns_client = client is None
+        if client is None:
+            client = (httpx.AsyncClient(timeout=webhook_timeout) if verify is None
+                      else httpx.AsyncClient(timeout=webhook_timeout, verify=verify))
+        self._client = client
 
         self._buffers: Dict[Tuple[str, str], RegistryEvent] = {}
         self._workers: Dict[str, _Worker] = {}

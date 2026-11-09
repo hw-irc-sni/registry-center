@@ -197,6 +197,11 @@ broadcast.enabled=false
 broadcast.allow.http.callbacks=false
 # Comma-separated permitted callback hosts; empty rejects all subscriptions.
 broadcast.callback.allowlist=
+# PEM bundle of extra CAs trusted for callback TLS, in addition to the default
+# (certifi) CAs; for listeners with private certificates. Relative paths are
+# resolved against the component root. Empty: default CAs only. A file that
+# cannot be loaded stops startup while broadcast is enabled.
+broadcast.callback.ca.file=
 
 # Reserved agent-to-graph switch. Its only effect today is one startup log line:
 # no agent data is exported yet. Graph data is served by the knowledge-graph API

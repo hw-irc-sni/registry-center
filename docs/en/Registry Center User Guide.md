@@ -301,6 +301,7 @@ Registry changes (registration/update/deregistration/health changes) are pushed 
 | broadcast.outbox.retention.days | Event retention days | 7 | `server.properties` |
 | broadcast.allow.http.callbacks | Whether HTTP callbacks are allowed (development only) | false | `server.conf` |
 | broadcast.callback.allowlist | Callback host allowlist (comma-separated domain names); mandatory before subscriptions can be created | empty (fails closed) | `server.conf` |
+| broadcast.callback.ca.file | PEM bundle of extra CAs trusted for callback TLS, added to the default CAs | empty (default CAs only) | `server.conf` |
 
 The in-process wake-up queue holds at most 1,024 hints; the dispatcher caches
 at most 1,024 subscriber/event pairs. Each subscriber has one queued batch and

@@ -1431,6 +1431,7 @@ JWKS `/rest/v1/registry-center/keys` 免应用 Token 认证，但不绕过 TLS�
   - 仅当`broadcast.enabled=true`时可用，否则返回503。
   - callback_url必须为HTTPS地址；开发环境可通过`broadcast.allow.http.callbacks=true`放开HTTP。
   - `broadcast.callback.allowlist`为必填：白名单为空时请求被拒绝（422），且不会发起投递。
+  - 回调TLS证书按默认CA加上可选的`broadcast.callback.ca.file`证书包校验（用于使用私有证书的监听方）。
   - 接口流控：默认50次/秒/IP。
 
 - 调用方法

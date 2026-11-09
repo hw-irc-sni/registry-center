@@ -1228,6 +1228,7 @@ Non-empty `agents` items have `{"agentCard": <complete card>, "layer": "OMC"}`. 
   - Available only when `broadcast.enabled=true`; otherwise 503.
   - callback_url must be HTTPS; HTTP can be allowed in development via `broadcast.allow.http.callbacks=true`.
   - `broadcast.callback.allowlist` is mandatory: an empty allowlist rejects the request (422) and no delivery is attempted.
+  - Callback TLS certificates are verified against the default CAs plus the optional `broadcast.callback.ca.file` bundle (for listeners with private certificates).
   - Rate limit: 50 requests/second/IP by default.
 
 - Method
