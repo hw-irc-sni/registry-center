@@ -1016,6 +1016,7 @@ Restart the service after changes; model clients are cached. Use `python -m scri
 | broadcast.callback.allowlist | Comma-separated permitted callback hosts; empty rejects all subscriptions | empty |
 | agent_to_graph_enabled | Reserved agent-to-graph switch; today it only prints one startup log line | false |
 | knowledge_graph.enabled | Enable the knowledge-graph API on the main port; while false every graph endpoint returns 404 | false |
+| tmf639.enabled | Enable the TMF639 Resource Inventory v5 facade (`/tmf-api/resourceInventoryManagement/v5`) on the main port; while false every TMF639 endpoint returns 404 | false |
 
 Note: the owner/identity rows above are the values shipped in the sample
 `etc/conf/server.conf`. The built-in code defaults are

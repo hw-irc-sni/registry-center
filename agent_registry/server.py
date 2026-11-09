@@ -103,6 +103,9 @@ from common.util.app_config import get_conf
 # Import knowledge graph router
 from agent_registry.knowledge_graph_api import knowledge_graph_router, close_neo4j_driver
 
+# Import the TMF639 Resource Inventory facade (gated by tmf639.enabled)
+from agent_registry.tmf639 import TMFError, tmf639_router, tmf_error_handler
+
 # ---------- Rate Limiter Setup (In-Memory) ----------
 # Use in-memory storage for single-node deployments. Counts reset on restart.
 sync_storage = storage.MemoryStorage()
@@ -2057,6 +2060,11 @@ async def health_probe():
 
 # Include knowledge graph router
 app.include_router(knowledge_graph_router)
+
+# TMF639 facade: TMF630 error bodies for its routes (more specific than the
+# HTTPException handler above), then the router itself.
+app.add_exception_handler(TMFError, tmf_error_handler)
+app.include_router(tmf639_router)
 
 # Add shutdown handler for Neo4j driver
 @app.on_event("shutdown")

@@ -208,3 +208,9 @@ agent_to_graph_enabled=false
 # server.properties (knowledge_graph.ratelimit, knowledge_graph.allowed.owners), and the
 # Neo4j connection is configured in persistence.conf (neo4j.uri/username/password).
 knowledge_graph.enabled=false
+
+# Enable the TMF639 Resource Inventory Management v5 facade on the main port
+# (/tmf-api/resourceInventoryManagement/v5): agent cards as TMF639 resources.
+# While false every TMF639 endpoint answers HTTP 404 (fail closed). It reuses the
+# main port's identity mode, rate limits, signature and owner checks.
+tmf639.enabled=false

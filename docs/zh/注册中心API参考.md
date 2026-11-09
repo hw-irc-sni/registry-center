@@ -1679,3 +1679,71 @@ JWKS `/rest/v1/registry-center/keys` 免应用 Token 认证，但不绕过 TLS�
 `GET /rest/v1/registry-center/agent-cards/manage` 返回各审核状态的卡片（也可用 `status` 筛选），每项附带 `publishStatus` 和 `registration.layer`。`statusCounts` 仍是未按审核状态筛选的全量审核计数。`registration.layer` 返回实际保存的厂商自定义层级字符串，旧登记未声明时为 `unknown`。管理响应用于 UI 展示，不是可直接作为签名 AgentCard 提交的登记载荷；公共 AgentCard 查询响应保持不变。
 
 原生前端仅把显式 service/service-layer、network/network-layer（兼容大小写及分隔符）归入服务层、网络层；其他自定义值保留原文，归入“其他/未指定”，缺失元数据显示“未指定”。不再根据所属厂商推断层级。应配套更新前后端；新前端连接旧管理 API 时，未返回的元数据按“未指定”展示。
+
+## TMF639资源清单接口
+
+可选的 TM Forum TMF639 Resource Inventory Management **v5** 视图，供在 ODA Canvas 中把注册中心对齐 TMFC012 Resource Inventory 的部署使用。默认关闭：设置 `tmf639.enabled=true`（或 `REGISTRY_TMF639_ENABLED=true`）开启。关闭时下列接口一律返回404。
+
+基础路径：`/tmf-api/resourceInventoryManagement/v5`
+
+| 方法 | 路径 | 对应功能 |
+|------|------|----------|
+| `GET` | `/resource` | 查询AgentCard |
+| `GET` | `/resource/{id}` | 获取单个AgentCard |
+| `POST` | `/resource` | 注册一个已签名的AgentCard |
+| `PATCH` | `/resource/{id}` | 替换已签名的AgentCard（全量更新） |
+| `DELETE` | `/resource/{id}` | 注销（204） |
+
+该接口不引入新的业务规则。注册和更新沿用原生接口的内容安全检查、签名校验、注册中心签名和审批流程，PATCH和DELETE沿用相同的属主校验，读取沿用发现接口的可见性规则。
+
+**资源映射。** 每个AgentCard对应一个 `category: A2AAgent` 的 `LogicalResource`：
+
+- `id`：`base64url(organization) + "." + base64url(name)`（UTF-8，无填充），为不透明标识，可放入单个路径段。
+- `name`、`description`、`resourceVersion`：取自卡片的 `name`、`description`、`version`；`creationDate` 为注册时间。
+- `resourceSpecification`：`{id: A2AAgentCard, name: "A2A AgentCard", version: <protocolVersion>}`。
+- `relatedParty`：提供方组织（角色 `provider`）；管理员还能看到属主身份（角色 `owner`）。
+- `resourceCharacteristic`：`agentCard`（保存的已签名卡片，驼峰命名，含注册中心签名）、`layer`、`reviewStatus`、`skills`、`tags`、`url` 和 `protocolVersion`（取第一个 `supportedInterfaces` 条目）；有心跳数据时还包含 `healthStatus` 和 `lastHeartbeat`。
+- 设置了 `registry.public.base_url` 时，`href` 使用该地址；应将其设为对外可见的基础地址（例如包含组件前缀的 ODA Canvas 网关地址）。
+
+| 审核状态 | `administrativeState` | `lifecycleState` |
+|----------|-----------------------|------------------|
+| `published` | `unlocked` | `installed` |
+| `registered`（待审核） | `locked` | `planned` |
+| `rejected` | `locked` | `planned` |
+| `deprecated` | `shuttingDown` | `pendingRemoval` |
+
+| 健康状态 | `operationalState` | `availabilityStatus` |
+|----------|--------------------|----------------------|
+| `healthy` | `enabled` | `online` |
+| `suspect` | `enabled` | `degraded` |
+| `offline` | `disabled` | `offline` |
+| 未知 / 未启用心跳 | 不返回 | 不返回；`unknownStatus: true` |
+
+**可见性。** 调用方可看到可发现的卡片（已发布且未被心跳过滤隐藏，与原生发现接口一致），以及自己拥有的全部卡片（已验证的属主身份，需启用属主隔离）。管理员（`owner.identity.mode=token` 且角色为 `nms_oss`）可看到所有审核状态，与管理列表一致。其他未发布的卡片对调用方在所有方法上都视为不存在：GET、PATCH、DELETE均返回404，也不计入 `X-Total-Count`。对他人拥有的可见卡片执行PATCH或DELETE返回403，且不透露属主。
+
+**`GET /resource` 查询参数。** 支持 `fields`、`offset`、`limit`，以及对 `name`、`category`、`administrativeState`、`operationalState`、`lifecycleState`、`availabilityStatus` 的精确匹配过滤（逗号表示“或”），另有 `relatedParty.name`（提供方组织）。响应带 `X-Total-Count` 和 `X-Result-Count` 头。`filter`（JSONPath）、`sort`、`before`、`after` 返回501。
+
+**POST 请求体。** 一个 Resource，其 `resourceCharacteristic` 包含 `agentCard`（完整、未经修改的已签名AgentCard对象），可选包含 `layer`。每次请求一张卡片。从GET响应复制来的只读属性会被忽略，但 `name`、`category`、`@type` 不得与卡片矛盾。成功返回201、资源内容和 `Location` 头；启用审批时返回的资源为 `locked` / `planned`。
+
+```json
+{
+  "@type": "LogicalResource",
+  "resourceCharacteristic": [
+    {"name": "agentCard", "value": {"name": "RanOptimizer", "provider": {"organization": "acme", "url": "https://acme.example"}, "...": "...", "signatures": ["..."]}},
+    {"name": "layer", "value": "network"}
+  ]
+}
+```
+
+**PATCH 请求体。** `Content-Type: application/merge-patch+json`（或 `application/json`），`resourceCharacteristic` 中携带新的已签名 `agentCard`，可选 `layer`。卡片的名称和组织必须与资源id一致。除 `@type` 和 `resourceCharacteristic` 外的属性返回400；替换已驳回的卡片会像原生更新一样重新提交审核；审核状态变更（发布、驳回、废弃）仍使用原生审核接口。JSON Patch（`application/json-patch+json`）返回415。AgentCard带签名，逐字段修改会破坏签名。
+
+**认证。** 主端口Token中间件只覆盖 `/rest/v1/registry-center`，因此该接口自带校验。在 `owner.identity.mode=token` 下使用同一认证提供方：
+
+- 所有已认证角色都可读取。
+- POST、PATCH、DELETE需要 `vendor_agent` 或 `nms_oss` 角色，其他角色返回403。
+
+其他身份模式沿用主端口行为（证书或可信代理的属主身份，以及AUTHENTICATE处理器）。
+
+**错误。** 采用 TMF630 错误体：`{"@type": "Error", "code": "404", "reason": "Not Found", "status": "404", "message": "..."}`。状态码与原生接口一致（401签名或身份无效、403非属主或角色不允许、409重复、422卡片校验失败、429限流）。仅Milvus部署（无权威存储）时所有操作返回503。超过1 MB的请求体（413）和超过1024字符的URL（414）在路由前被拒绝，响应为纯文本。
+
+本版本不包含变更通知（`/hub`）。
